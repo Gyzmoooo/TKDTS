@@ -87,22 +87,16 @@ def parse_aggregated_data(aggregated_text, expected_ids_list):
 def format_data_for_row(data_by_esp, target_timesteps, expected_ids_list):
     try:
         active_esp_ids = [esp_id for esp_id in expected_ids_list if data_by_esp.get(esp_id)]
-        if not active_esp_ids: print("Format ERR: No ESP32 active in parsed data."); return None
         samples_counts = [len(data_by_esp[esp_id]) for esp_id in active_esp_ids]
-        print(f"Il numero di sample è: {samples_counts}")
-        min_samples = min(samples_counts) if samples_counts else 0
+        min_samples = min(samples_counts)
         
-        # Se min_samples == 0, allora uno degli Smart Straps non ha mandato dati
-        if min_samples == 0 and target_timesteps > 0: 
-            print(f"Format ERR: Minimo campioni comuni tra ESP attivi è 0.")
-            return None
+        if target_timesteps > 0 and len(samples_counts) != 4: 
+            raise Exception(f"{4 - len(samples_counts)} of the ESP32 didn't send any data")
 
-        indices_to_select = []
         if min_samples >= target_timesteps:
             indices_to_select = list(range(target_timesteps))
         elif min_samples > 0 :
-             indices_to_select = list(range(min_samples))
-             print(f"Format WARN: Campioni disponibili ({min_samples}) < target ({target_timesteps}). Uso tutti i campioni disponibili.")
+             raise Exception(f"Samples available ({min_samples}) < target ({target_timesteps})")
 
         row_data_values = []; contains_real_errors = False
         num_actual_indices = len(indices_to_select)
@@ -150,8 +144,7 @@ def format_data_for_row(data_by_esp, target_timesteps, expected_ids_list):
             print(f"ERRORE CRITICO LUNGHEZZA DATI: Generati {len(row_data_values)} valori != {EXPECTED_DATA_COLUMNS} attesi."); return None
         print(row_data_values)
         return row_data_values
-    except Exception as e:
-        print(f"Errore critico durante formattazione dati per riga DF: {e}"); traceback.print_exc(); return None
+    except Exception as e: traceback.print_exc() ; return None
 
 def delete_data_on_master():
     try:
