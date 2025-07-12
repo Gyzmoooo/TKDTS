@@ -9,12 +9,10 @@ import pandas as pd
 import numpy as np
 from joblib import load
 
-#df = pd.DataFrame(data, columns=generate_column_names(TIMESTEPS))
-
 # --- Costanti e Configurazioni 
 URL_FETCH = "http://192.168.4.1/"
 URL_DELETE = f"{URL_FETCH}delete"
-MODEL_PATH = 'C:\\Users\\simon\\Desktop\\Taekwondo-TS\\Codice\\modello\\modello.sav'
+MODEL_PATH = 'C:\\Users\\giuli\\Desktop\\Code\\TKDTS\\model\\rf_model.sav'
 
 TIMESTEPS = 20 # numero di prese dati per calcio
 NUM_DATA_PER_TIMESTEP = 24 # totale dati per presa
@@ -37,6 +35,14 @@ def generate_column_names(num_timesteps):
                     col_name = f"{sensor_type}{board_id}{axis}{suffix}"
                     column_names.append(col_name)
     return column_names
+
+def parse_data(raw_data):
+    number_pattern = r'-?\d+\.?\d*'
+    data = [float(num_str) for num_str in re.findall(number_pattern, raw_data)]
+    return data
+
+#df = pd.DataFrame(parse_data(), columns=generate_column_names(TIMESTEPS))
+
 
 '''
 def check_data_completeness(aggregated_text, expected_ids_list):
@@ -70,18 +76,17 @@ def parse_aggregated_data(aggregated_text, expected_ids_list):
                 processed_ids.add(esp_id)
                 readings = esp_block.split(f'ID{esp_id};')
                 if readings and readings[0] == '': readings = readings[1:]
-                valid_readings_count = 0
                 for reading_set in readings:
-                    if not reading_set.strip(): continue
                     parts = reading_set.strip().split(';')
-                    accel_data = None; gyro_data = None
+                    accel_data = None
+                    gyro_data = None
                     for part in parts:
                         if part.startswith("A:"): accel_data = part
-                        elif part.startswith("G:"): gyro_data = part
+                        if part.startswith("G:"): gyro_data = part
                     if accel_data and gyro_data:
                         data_by_esp[esp_id].append((accel_data, gyro_data))
-                        valid_readings_count += 1
         if not processed_ids: return None
+        print(data_by_esp)
         return data_by_esp
     except Exception as e:
         print(f"Errore critico durante parsing: {e}"); traceback.print_exc(); return None
@@ -198,19 +203,18 @@ class Worker:
                 try:
                     response = requests.get(URL_FETCH, timeout=10)
                     response.raise_for_status()
-                    current_aggregated_data = response.text
+                    aggregated_data = response.text
 
-                    if not current_aggregated_data or not current_aggregated_data.strip():
+                    if not aggregated_data or not aggregated_data.strip():
                         msg = "   Buffer Master vuoto."
                         print(msg)
                         if attempt < MAX_FETCH_ATTEMPTS - 1: time.sleep(RETRY_DELAY_SECONDS)
                         continue
                     else:
-                        print(f"   Dati ricevuti (Len: {len(current_aggregated_data)}). Parsing...")
-                        current_parsed_data = parse_aggregated_data(current_aggregated_data, EXPECTED_ESP_IDS)
+                        print(f"   Dati ricevuti (Len: {len(aggregated_data)}). Parsing...")
+                        parsed_data = parse_aggregated_data(aggregated_data, EXPECTED_ESP_IDS)
 
-                        if current_parsed_data:
-                            parsed_data = current_parsed_data
+                        if parsed_data:
                             fetch_successful = True
                             active_ids = [k for k, v in parsed_data.items() if v]
                             if active_ids:
