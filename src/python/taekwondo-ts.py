@@ -38,6 +38,7 @@ def generate_column_names(num_timesteps):
                     column_names.append(col_name)
     return column_names
 
+'''
 def check_data_completeness(aggregated_text, expected_ids_list):
     if not aggregated_text or not aggregated_text.strip(): return False
     missing_markers = []
@@ -53,34 +54,34 @@ def check_data_completeness(aggregated_text, expected_ids_list):
     if not all_found:
         print(f"WARN: Dati potenzialmente incompleti. Marcatori mancanti: {', '.join(missing_markers)}")
     return all_found
+'''
 
 def parse_aggregated_data(aggregated_text, expected_ids_list):
     try:
         data_by_esp = {esp_id: [] for esp_id in expected_ids_list}
-        processed_ids_in_parsing = set()
+        processed_ids = set()
         for esp_id in expected_ids_list:
-            start_marker = f"Start{esp_id};"; end_marker = f"End{esp_id};"
+            start_marker = f"Start{esp_id};"
+            end_marker = f"End{esp_id};"
             last_start_idx = aggregated_text.rfind(start_marker)
-            if last_start_idx != -1:
-                last_end_idx = aggregated_text.find(end_marker, last_start_idx + len(start_marker))
-                if last_end_idx != -1:
-                    esp_block = aggregated_text[last_start_idx + len(start_marker) : last_end_idx]
-                    processed_ids_in_parsing.add(esp_id)
-                    readings = esp_block.split(f'ID{esp_id};')
-                    if readings and readings[0] == '': readings = readings[1:]
-                    valid_readings_count = 0
-                    for reading_set in readings:
-                        if not reading_set.strip(): continue
-                        parts = reading_set.strip().split(';')
-                        accel_data = None; gyro_data = None
-                        for part in parts:
-                            if part.startswith("A:"): accel_data = part
-                            elif part.startswith("G:"): gyro_data = part
-                        if accel_data and gyro_data:
-                            data_by_esp[esp_id].append((accel_data, gyro_data))
-                            valid_readings_count += 1
-        if not processed_ids_in_parsing:
-            return None
+            last_end_idx = aggregated_text.find(end_marker, last_start_idx + len(start_marker))
+            if last_end_idx != -1 and last_start_idx != -1:
+                esp_block = aggregated_text[last_start_idx + len(start_marker) : last_end_idx]
+                processed_ids.add(esp_id)
+                readings = esp_block.split(f'ID{esp_id};')
+                if readings and readings[0] == '': readings = readings[1:]
+                valid_readings_count = 0
+                for reading_set in readings:
+                    if not reading_set.strip(): continue
+                    parts = reading_set.strip().split(';')
+                    accel_data = None; gyro_data = None
+                    for part in parts:
+                        if part.startswith("A:"): accel_data = part
+                        elif part.startswith("G:"): gyro_data = part
+                    if accel_data and gyro_data:
+                        data_by_esp[esp_id].append((accel_data, gyro_data))
+                        valid_readings_count += 1
+        if not processed_ids: return None
         return data_by_esp
     except Exception as e:
         print(f"Errore critico durante parsing: {e}"); traceback.print_exc(); return None
