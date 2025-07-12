@@ -55,8 +55,6 @@ def parse_data(raw_data):
     
     return data
 
-#df = pd.DataFrame(parse_data(), columns=generate_column_names(TIMESTEPS))
-
 def delete_data_on_master():
     try:
         print("Sending DELETE request at", URL_DELETE)
@@ -82,6 +80,18 @@ class Worker:
         self.model = model
         self.dataframe_columns = columns
         self._is_running = True
+
+    def create_df(self):
+        try:
+            response = requests.get(URL_FETCH, timeout=10)
+            response.raise_for_status()
+            raw = response.text
+            df = pd.DataFrame(parse_data(raw), columns=generate_column_names(TIMESTEPS))
+        except:
+
+
+    def predict(self):
+        
 
     def run(self):
         print("Avvio thread worker...") # Log Console

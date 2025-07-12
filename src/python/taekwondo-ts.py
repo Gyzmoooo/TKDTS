@@ -1,10 +1,8 @@
 import sys
 import requests
-import datetime
 import time
 import re
 import traceback
-import string
 import pandas as pd
 import numpy as np
 from joblib import load
@@ -89,14 +87,19 @@ def parse_aggregated_data(aggregated_text, expected_ids_list):
 def format_data_for_row(data_by_esp, target_timesteps, expected_ids_list):
     try:
         active_esp_ids = [esp_id for esp_id in expected_ids_list if data_by_esp.get(esp_id)]
-        if not active_esp_ids: print("Format ERR: Nessun ESP attivo nei dati parsati."); return None
+        if not active_esp_ids: print("Format ERR: No ESP32 active in parsed data."); return None
         samples_counts = [len(data_by_esp[esp_id]) for esp_id in active_esp_ids]
+        print(f"Il numero di sample è: {samples_counts}")
         min_samples = min(samples_counts) if samples_counts else 0
-        if min_samples == 0 and target_timesteps > 0: print(f"Format ERR: Minimo campioni comuni tra ESP attivi è 0."); return None
+        
+        # Se min_samples == 0, allora uno degli Smart Straps non ha mandato dati
+        if min_samples == 0 and target_timesteps > 0: 
+            print(f"Format ERR: Minimo campioni comuni tra ESP attivi è 0.")
+            return None
 
-        num_to_select = target_timesteps; indices_to_select = []
-        if min_samples >= num_to_select:
-            indices_to_select = list(range(num_to_select))
+        indices_to_select = []
+        if min_samples >= target_timesteps:
+            indices_to_select = list(range(target_timesteps))
         elif min_samples > 0 :
              indices_to_select = list(range(min_samples))
              print(f"Format WARN: Campioni disponibili ({min_samples}) < target ({target_timesteps}). Uso tutti i campioni disponibili.")
@@ -294,7 +297,6 @@ class Worker:
 
             if self._is_running:
                 time.sleep(1)
-                
         print("--- Thread Worker Terminato ---")
 
     def stop(self):
