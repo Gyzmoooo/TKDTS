@@ -23,6 +23,7 @@ RETRY_DELAY_SECONDS = 2
 NUM_BOARDS = 4
 SENSORS = ['A', 'G']
 AXES = ['x', 'y', 'z']
+N_DATA = TIMESTEPS * NUM_BOARDS * len(SENSORS) * len(AXES)
 
 # --- Funzioni di Elaborazione Dati 
 def generate_column_names(num_timesteps):
@@ -37,30 +38,24 @@ def generate_column_names(num_timesteps):
     return column_names
 
 def parse_data(raw_data):
-    number_pattern = r'-?\d+\.?\d*'
-    data = [float(num_str) for num_str in re.findall(number_pattern, raw_data)]
+    try:    
+        number_pattern = r'-?\d+\.?\d*'
+        data = [float(num_str) for num_str in re.findall(number_pattern, raw_data)]
+
+        if not data: 
+            print("No ESP32 active in parsed data")
+            return None
+        if len(data) > N_DATA: 
+            raise Exception("More data than expected got parsed")
+        if len(data) < N_DATA: 
+            print("Less data than expected got parsed")
+
+    except Exception as e:
+        print(f"Critical error during parsing: {e}"); traceback.print_exc(); return None
+    
     return data
 
 #df = pd.DataFrame(parse_data(), columns=generate_column_names(TIMESTEPS))
-
-
-'''
-def check_data_completeness(aggregated_text, expected_ids_list):
-    if not aggregated_text or not aggregated_text.strip(): return False
-    missing_markers = []
-    all_found = True
-    for esp_id in expected_ids_list:
-        start_marker = f"Start{esp_id};"; end_marker = f"End{esp_id};"
-        start_found = start_marker in aggregated_text; end_found = end_marker in aggregated_text
-        if not start_found or not end_found:
-            all_found = False
-            if not start_found and not end_found: missing_markers.append(f"ESP {esp_id} (Start & End mancanti)")
-            elif not start_found: missing_markers.append(f"ESP {esp_id} (Start mancante)")
-            else: missing_markers.append(f"ESP {esp_id} (End mancante)")
-    if not all_found:
-        print(f"WARN: Dati potenzialmente incompleti. Marcatori mancanti: {', '.join(missing_markers)}")
-    return all_found
-'''
 
 def parse_aggregated_data(aggregated_text, expected_ids_list):
     try:
@@ -334,34 +329,30 @@ class Worker:
 
 # --- Esecuzione Principale ---
 if __name__ == "__main__":
-    print("Caricamento modello...")
+    print("Loading the model...")
     try:
-        modello_caricato = load(MODEL_PATH)
-        print("Modello caricato con successo.")
+        model = load(MODEL_PATH)
+        print("Model loaded succesfully.")
     except FileNotFoundError:
-        print(f"ERRORE CRITICO: File modello non trovato in {MODEL_PATH}")
+        print(f"CRITICAL ERROR: Model's file not found in {MODEL_PATH}")
         sys.exit(1)
     except Exception as e:
-        print(f"ERRORE CRITICO: Impossibile caricare il modello: {e}")
+        print(f"CRITICAL ERROR: Unable to upload the model: {e}")
         traceback.print_exc()
         sys.exit(1)
 
-    print("Generazione nomi colonne DataFrame...")
-    colonne_df = generate_column_names(TIMESTEPS)
-    if not colonne_df or len(colonne_df) != EXPECTED_DATA_COLUMNS:
-        print("ERRORE CRITICO: Nomi colonne non validi o numero errato.")
+    df_columns = generate_column_names(TIMESTEPS)
+    if not df_columns or len(df_columns) != EXPECTED_DATA_COLUMNS:
+        print("CRITICAL ERROR: Invalid column names or wrong number.")
         sys.exit(1)
-    print(f"Nomi colonne generati ({len(colonne_df)}).")
 
-    print("Avvio del processo di acquisizione e predizione (senza GUI)...")
-    worker = Worker(modello_caricato, colonne_df)
+    print("Starting the process of acquisition and prediction...")
+    worker = Worker(model, df_columns)
     try:
         worker.run()
     except KeyboardInterrupt:
-        print("\nInterruzione da tastiera rilevata. Arresto del worker.")
+        print("\nKeyboard interruption detected.")
         worker.stop()
     except Exception as e:
-        print(f"Errore critico nell'esecuzione del worker principale: {e}")
+        print(f"Critical error in the execution of the main worker: {e}")
         traceback.print_exc()
-    finally:
-        print("Processo principale terminato.")
