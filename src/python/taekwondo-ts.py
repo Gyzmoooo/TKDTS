@@ -9,16 +9,17 @@ import pandas as pd
 import numpy as np
 from joblib import load
 
+#df = pd.DataFrame(data, columns=generate_column_names(TIMESTEPS))
 
 # --- Costanti e Configurazioni 
 URL_FETCH = "http://192.168.4.1/"
-URL_DELETE = "http://192.168.4.1/delete"
+URL_DELETE = f"{URL_FETCH}delete"
 MODEL_PATH = 'C:\\Users\\simon\\Desktop\\Taekwondo-TS\\Codice\\modello\\modello.sav'
 
 TIMESTEPS = 20 # numero di prese dati per calcio
 NUM_DATA_PER_TIMESTEP = 24 # totale dati per presa
 EXPECTED_DATA_COLUMNS = NUM_DATA_PER_TIMESTEP * TIMESTEPS # colonne csv
-EXPECTED_ESP_IDS = ["1", "2", "3", "4"] # ids esp
+EXPECTED_ESP_IDS = [str(i + 1) for i in range(4)] # ids esp
 MAX_FETCH_ATTEMPTS = 2
 RETRY_DELAY_SECONDS = 2
 NUM_BOARDS = 4
@@ -29,7 +30,7 @@ AXES = ['x', 'y', 'z']
 def generate_column_names(num_timesteps):
     column_names = []
     for i in range(num_timesteps):
-        suffix = f"_{i}"
+        suffix = f"_{i + 1}"
         for sensor_type in SENSORS:
             for board_id in range(1, NUM_BOARDS + 1):
                 for axis in AXES:
@@ -39,32 +40,33 @@ def generate_column_names(num_timesteps):
 
 def check_data_completeness(aggregated_text, expected_ids_list):
     if not aggregated_text or not aggregated_text.strip(): return False
-    missing_markers = []; all_found = True
-    for an_esp_id in expected_ids_list:
-        start_marker = f"Start{an_esp_id};"; end_marker = f"End{an_esp_id};"
+    missing_markers = []
+    all_found = True
+    for esp_id in expected_ids_list:
+        start_marker = f"Start{esp_id};"; end_marker = f"End{esp_id};"
         start_found = start_marker in aggregated_text; end_found = end_marker in aggregated_text
         if not start_found or not end_found:
             all_found = False
-            if not start_found and not end_found: missing_markers.append(f"ESP {an_esp_id} (Start & End mancanti)")
-            elif not start_found: missing_markers.append(f"ESP {an_esp_id} (Start mancante)")
-            else: missing_markers.append(f"ESP {an_esp_id} (End mancante)")
+            if not start_found and not end_found: missing_markers.append(f"ESP {esp_id} (Start & End mancanti)")
+            elif not start_found: missing_markers.append(f"ESP {esp_id} (Start mancante)")
+            else: missing_markers.append(f"ESP {esp_id} (End mancante)")
     if not all_found:
         print(f"WARN: Dati potenzialmente incompleti. Marcatori mancanti: {', '.join(missing_markers)}")
     return all_found
 
 def parse_aggregated_data(aggregated_text, expected_ids_list):
     try:
-        data_by_esp = {an_esp_id: [] for an_esp_id in expected_ids_list}
+        data_by_esp = {esp_id: [] for esp_id in expected_ids_list}
         processed_ids_in_parsing = set()
-        for an_esp_id in expected_ids_list:
-            start_marker = f"Start{an_esp_id};"; end_marker = f"End{an_esp_id};"
+        for esp_id in expected_ids_list:
+            start_marker = f"Start{esp_id};"; end_marker = f"End{esp_id};"
             last_start_idx = aggregated_text.rfind(start_marker)
             if last_start_idx != -1:
                 last_end_idx = aggregated_text.find(end_marker, last_start_idx + len(start_marker))
                 if last_end_idx != -1:
                     esp_block = aggregated_text[last_start_idx + len(start_marker) : last_end_idx]
-                    processed_ids_in_parsing.add(an_esp_id)
-                    readings = esp_block.split(f'ID{an_esp_id};')
+                    processed_ids_in_parsing.add(esp_id)
+                    readings = esp_block.split(f'ID{esp_id};')
                     if readings and readings[0] == '': readings = readings[1:]
                     valid_readings_count = 0
                     for reading_set in readings:
@@ -75,7 +77,7 @@ def parse_aggregated_data(aggregated_text, expected_ids_list):
                             if part.startswith("A:"): accel_data = part
                             elif part.startswith("G:"): gyro_data = part
                         if accel_data and gyro_data:
-                            data_by_esp[an_esp_id].append((accel_data, gyro_data))
+                            data_by_esp[esp_id].append((accel_data, gyro_data))
                             valid_readings_count += 1
         if not processed_ids_in_parsing:
             return None
@@ -85,9 +87,9 @@ def parse_aggregated_data(aggregated_text, expected_ids_list):
 
 def format_data_for_row(data_by_esp, target_timesteps, expected_ids_list):
     try:
-        active_esp_ids = [an_esp_id for an_esp_id in expected_ids_list if data_by_esp.get(an_esp_id)]
+        active_esp_ids = [esp_id for esp_id in expected_ids_list if data_by_esp.get(esp_id)]
         if not active_esp_ids: print("Format ERR: Nessun ESP attivo nei dati parsati."); return None
-        samples_counts = [len(data_by_esp[an_esp_id]) for an_esp_id in active_esp_ids]
+        samples_counts = [len(data_by_esp[esp_id]) for esp_id in active_esp_ids]
         min_samples = min(samples_counts) if samples_counts else 0
         if min_samples == 0 and target_timesteps > 0: print(f"Format ERR: Minimo campioni comuni tra ESP attivi è 0."); return None
 
