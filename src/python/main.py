@@ -50,8 +50,6 @@ def parse_data(raw_data, expected_ids_list, target_timesteps):
             esp_block = raw_data[last_start_idx + len(f"Start{esp_id};") : last_end_idx]
             esp_block = esp_block.replace(f"ID{esp_id}", "")
             data[esp_id] = [float(num_str) for num_str in re.findall(number_pattern, esp_block)]
-
-    print(data)        
     
     active_esp_ids = [esp_id for esp_id in expected_ids_list if data.get(esp_id)]
     samples_counts = [(len(data[esp_id]) / 6) for esp_id in active_esp_ids]
