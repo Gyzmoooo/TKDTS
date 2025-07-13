@@ -13,15 +13,14 @@ URL_DELETE = f"{URL_FETCH}delete"
 MODEL_PATH = 'C:\\Users\\giuli\\Desktop\\Code\\TKDTS\\model\\rf_model.sav'
 
 TIMESTEPS = 20 # numero di prese dati per calcio
-NUM_DATA_PER_TIMESTEP = 24 # totale dati per presa
-EXPECTED_DATA_COLUMNS = NUM_DATA_PER_TIMESTEP * TIMESTEPS # colonne csv
 EXPECTED_ESP_IDS = [str(i + 1) for i in range(4)] # ids esp
 MAX_FETCH_ATTEMPTS = 2
 RETRY_DELAY_SECONDS = 2
 NUM_BOARDS = 4
 SENSORS = ['A', 'G']
 AXES = ['x', 'y', 'z']
-N_DATA = TIMESTEPS * NUM_BOARDS * len(SENSORS) * len(AXES)
+NUM_DATA_PER_TIMESTEP = len(SENSORS) * len(AXES) * NUM_BOARDS # totale dati per presa
+EXPECTED_DATA_COLUMNS = NUM_DATA = TIMESTEPS * NUM_DATA_PER_TIMESTEP
 
 # --- Funzioni di Elaborazione Dati 
 def generate_column_names(num_timesteps):
