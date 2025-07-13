@@ -207,6 +207,7 @@ class Worker:
                                 min_samples = min(len(parsed_data[eid]) for eid in active_ids) if active_ids else 0
                                 print(f"Parsing OK. Campioni min: {min_samples}/{TIMESTEPS}")  
                                 all_active_have_enough = all(len(parsed_data[eid]) >= TIMESTEPS for eid in active_ids)
+                                print(all_active_have_enough)
                                 if all_active_have_enough:
                                     print("--> Dati sufficienti ricevuti! Procedo.")
                                     sufficient_data_received = True
