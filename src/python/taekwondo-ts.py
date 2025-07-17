@@ -34,26 +34,6 @@ def generate_column_names(num_timesteps):
                     column_names.append(col_name)
     return column_names
 
-def parse_data(raw_data):
-    try:    
-        number_pattern = r'-?\d+\.?\d*'
-        data = [float(num_str) for num_str in re.findall(number_pattern, raw_data)]
-
-        if not data: 
-            print("No ESP32 active in parsed data")
-            return None
-        if len(data) > N_DATA: 
-            raise Exception("More data than expected got parsed")
-        if len(data) < N_DATA: 
-            print("Less data than expected got parsed")
-
-    except Exception as e:
-        print(f"Critical error during parsing: {e}"); traceback.print_exc(); return None
-    
-    return data
-
-#df = pd.DataFrame(parse_data(), columns=generate_column_names(TIMESTEPS))
-
 def parse_aggregated_data(aggregated_text, expected_ids_list):
     try:
         data_by_esp = {esp_id: [] for esp_id in expected_ids_list}
@@ -78,7 +58,6 @@ def parse_aggregated_data(aggregated_text, expected_ids_list):
                     if accel_data and gyro_data:
                         data_by_esp[esp_id].append((accel_data, gyro_data))
         if not processed_ids: return None
-        print(data_by_esp)
         return data_by_esp
     except Exception as e:
         print(f"Errore critico durante parsing: {e}"); traceback.print_exc(); return None
@@ -191,6 +170,7 @@ class Worker:
                     response = requests.get(URL_FETCH, timeout=10)
                     response.raise_for_status()
                     aggregated_data = response.text
+                    print(aggregated_data)
 
                     if not aggregated_data or not aggregated_data.strip():
                         print("Buffer Master vuoto.")
@@ -203,6 +183,7 @@ class Worker:
                         if parsed_data:
                             fetch_successful = True
                             active_ids = [k for k, v in parsed_data.items() if v]
+                            print(f"QUESTI SONO GLI ACTIVE IDS: {active_ids}")
                             if active_ids:
                                 min_samples = min(len(parsed_data[eid]) for eid in active_ids) if active_ids else 0
                                 print(f"Parsing OK. Campioni min: {min_samples}/{TIMESTEPS}")  
