@@ -42,6 +42,14 @@ def parse_data(raw_data, expected_ids_list):
     print(raw_data)
     
     # Parses all data and stores them in a list
+    for esp_id in expected_ids_list:
+        last_start_idx = raw_data.rfind(f"Start{esp_id};")
+        last_end_idx = raw_data.find(f"End{esp_id};", last_start_idx + len(f"Start{esp_id};"))
+        if last_end_idx != -1 and last_start_idx != -1:
+            esp_block = raw_data[last_start_idx + len(f"Start{esp_id};") : last_end_idx]
+            esp_block = esp_block.replace(f"ID{esp_id}", "")
+            esp_data.append([float(num_str) for num_str in re.findall(number_pattern, esp_block)])
+        else: esp_data.append([])
 
     return esp_data
 
