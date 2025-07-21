@@ -120,6 +120,8 @@ void handleButtonPress() {
     Serial.println("Pulsante Premuto: FINE Raccolta Dati Globale.");
     if (accumulatedData_ESP1.endsWith(";")) { // Aggiunge End solo se ci sono stati dati
         accumulatedData_ESP1 += "End" + String(MASTER_ESP_ID) + ";";
+
+        // Qui va inserito codice
     }
 
     // Invia comando STOP via ESP-NOW a tutti i client con retry
@@ -143,7 +145,6 @@ void handleButtonPress() {
   }
 }
 
-// Gestore per la radice 
 void handleRoot() {
   String aggregatedData = "";
   // Concatena i dati da tutti gli ESP 
@@ -151,7 +152,11 @@ void handleRoot() {
   aggregatedData += accumulatedData_ESP2;
   aggregatedData += accumulatedData_ESP3;
   aggregatedData += accumulatedData_ESP4;
-  server.send(200, "text/plain", aggregatedData);
+
+  if (collectingDataMaster):
+    server.send(200, "text/plain", "aspettaciola");
+  else:
+    server.send(200, "text/plain", aggregatedData);
 }
 
 // Gestore per la sottomissione dati dai client
