@@ -153,10 +153,12 @@ void handleRoot() {
   aggregatedData += accumulatedData_ESP3;
   aggregatedData += accumulatedData_ESP4;
 
-  if (collectingDataMaster):
+  if (collectingDataMaster) {
     server.send(200, "text/plain", "aspettaciola");
-  else:
+  }
+  else {
     server.send(200, "text/plain", aggregatedData);
+  }
 }
 
 // Gestore per la sottomissione dati dai client
