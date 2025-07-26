@@ -1,126 +1,159 @@
 import sys
-import requests
-import datetime
 import time
 import re
 import traceback
-import string
+import os
+
+import requests
 import pandas as pd
-import numpy as np
 from joblib import load
 
 # --- Costanti e Configurazioni 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = BASE_DIR.strip("src\python") + '\model\\rf_model.sav'
+
 URL_FETCH = "http://192.168.4.1/"
 URL_DELETE = f"{URL_FETCH}delete"
-MODEL_PATH = 'C:\\Users\\giuli\\Desktop\\Code\\TKDTS\\model\\rf_model.sav'
 
-TIMESTEPS = 20 # numero di prese dati per calcio
-EXPECTED_ESP_IDS = [str(i + 1) for i in range(4)] # ids esp
-MAX_FETCH_ATTEMPTS = 2
-RETRY_DELAY_SECONDS = 2
+TIMESTEPS = 20
 NUM_BOARDS = 4
 SENSORS = ['A', 'G']
 AXES = ['x', 'y', 'z']
-NUM_DATA_PER_TIMESTEP = len(SENSORS) * len(AXES) * NUM_BOARDS # totale dati per presa
-EXPECTED_DATA_COLUMNS = NUM_DATA = TIMESTEPS * NUM_DATA_PER_TIMESTEP
 
-# --- Funzioni di Elaborazione Dati 
-def generate_column_names(num_timesteps):
-    column_names = []
-    for i in range(num_timesteps):
-        suffix = f"_{i + 1}"
-        for board_id in range(1, NUM_BOARDS + 1):
-            for sensor_type in SENSORS:
-                for axis in AXES:
-                    col_name = f"{sensor_type}{board_id}{axis}{suffix}"
-                    column_names.append(col_name)
-    return column_names
+EXPECTED_ESP_IDS = [str(i + 1) for i in range(NUM_BOARDS)]
+NUM_DATA_PER_TIMESTEP = len(SENSORS) * len(AXES) * NUM_BOARDS
+EXPECTED_DATA_COLUMNS = TIMESTEPS * NUM_DATA_PER_TIMESTEP
 
-def parse_data(raw_data, expected_ids_list):
-    number_pattern = r'-?\d+\.?\d*'
-    esp_data = []
-    print(raw_data)
-    
-    # Parses all data and stores them in a list
-    for esp_id in expected_ids_list:
-        last_start_idx = raw_data.rfind(f"Start{esp_id};")
-        last_end_idx = raw_data.find(f"End{esp_id};", last_start_idx + len(f"Start{esp_id};"))
-        if last_end_idx != -1 and last_start_idx != -1:
-            esp_block = raw_data[last_start_idx + len(f"Start{esp_id};") : last_end_idx]
-            esp_block = esp_block.replace(f"ID{esp_id}", "")
-            esp_data.append([float(num_str) for num_str in re.findall(number_pattern, esp_block)])
-        else: esp_data.append([])
+MAX_FETCH_ATTEMPTS = 2
+RETRY_DELAY_SECONDS = 2
 
-    return esp_data
+class UnsufficientSamples(Exception):
+    """Exception raised when the number of samples received is less than expected"""
+    def __init__(self, e_samples, r_samples, msg="Samples received is less than expected"):
+        self.message = (
+            f"{msg}: Received {r_samples}, Expected {e_samples}. "
+        )
+        super().__init__(self.message)
 
-def format_data(esp_data, target_timesteps, num_boards):
-    # Verifies data completeness and number of samples 
-    active_esp_ids = [str(esp_id + 1) for esp_id in range(len(esp_data)) if esp_data[esp_id] != []]
-    print(active_esp_ids)
-    samples_counts = [(len(esp_data[int(esp_id) - 1]) / 6) for esp_id in active_esp_ids]
-    print(samples_counts)
-    min_samples = int(min(samples_counts))
-    if target_timesteps > 0 and len(samples_counts) != 4: 
-        raise Exception(f"{4 - len(samples_counts)} of the ESP32 didn't send any data")
-    elif min_samples < target_timesteps:
-        raise Exception(f"Samples available ({min_samples}) < target ({target_timesteps})")
+class UncompleteData(Exception):
+    """Exception raised when at least one of the ESP32 didn't send any data"""
+    def __init__(self, e_ids, r_ids, msg=" of the ESP32 didn't send any data"):
+        self.empty_ids = [esp_id for esp_id in e_ids if esp_id not in r_ids]
+        self.message = (
+            f"{len(self.empty_ids)}{msg}. IDs of the boards: {self.empty_ids}. "
+        )
+        super().__init__(self.message)
 
-    # Eliminates excessive data
-    for esp in range(num_boards):
-        data_to_eliminate = int(-6 * (samples_counts[int(esp)] - min_samples) - 1)
-        del esp_data[esp][-1:data_to_eliminate:-1]
+class DataProcessor:
+    def __init__(self, url_delete, timesteps, num_boards, sensors, axes, expected_esp_ids):
+        self.url_delete = url_delete
+        self.timesteps = timesteps
+        self.num_boards = num_boards
+        self.sensors = sensors
+        self.axes = axes
+        self.expected_esp_ids = expected_esp_ids
 
-    # Conversion in list of lists format, where each sublist contains a single sample
-    unfiltered_data = []
-    for i in range(min_samples):
-        sample = []
-        for j in range(num_boards):
-            start = i * len(SENSORS) * len(AXES)
-            end = start + len(SENSORS) * len(AXES)
-            sample.extend(esp_data[j][start:end])
-        unfiltered_data.append(sample)
-    
-    # Sample reduction to 20
-    data = [[]]
-    step = (len(unfiltered_data) - 1) / (target_timesteps - 1)
-    for i in range(target_timesteps):
-        index = round(i * step)
-        for j in unfiltered_data[min(index, len(unfiltered_data) - 1)]: data[0].append(j)
 
-    return data
+    def generate_column_names(self):
+        column_names = []
+        for i in range(self.timesteps):
+            suffix = f"_{i + 1}"
+            for board_id in range(1, self.num_boards + 1):
+                for sensor_type in self.sensors:
+                    for axis in self.axes:
+                        col_name = f"{sensor_type}{board_id}{axis}{suffix}"
+                        column_names.append(col_name)
+        return column_names
 
-def delete_data_on_master():
-    try:
-        print("Sending DELETE request at", URL_DELETE)
-        response = requests.get(URL_DELETE, timeout=5)
-        if response.status_code == 200 and "OK" in response.text:
-             return True
-        else:
-             print(f"Error sending DELETE command: Status {response.status_code}, Response: {response.text}")
-             return False
-    except requests.exceptions.Timeout:
-        print(f"Timeout during DELETE request at {URL_DELETE}")
-        return False
-    except requests.exceptions.RequestException as e:
-        print(f"Error during communication with Master (DELETE): {e}")
-        return False
-    except Exception as e:
-        print(f"Generic error during DELETE: {e}")
-        return False
+    def parse_data(self, raw_data):
+        number_pattern = r'-?\d+\.?\d*'
+        esp_data = []
+        
+        # Parses all data and stores them in a list
+        for esp_id in self.expected_esp_ids:
+            last_start_idx = raw_data.rfind(f"Start{esp_id};")
+            last_end_idx = raw_data.find(f"End{esp_id};", last_start_idx + len(f"Start{esp_id};"))
+            if last_end_idx != -1 and last_start_idx != -1:
+                esp_block = raw_data[last_start_idx + len(f"Start{esp_id};") : last_end_idx]
+                esp_block = esp_block.replace(f"ID{esp_id}", "")
+                esp_data.append([float(num_str) for num_str in re.findall(number_pattern, esp_block)])
+            else: esp_data.append([])
+
+        return esp_data
+
+    def format_data(self, esp_data):
+        # Verifies data completeness and number of samples
+        active_esp_ids = [str(esp_id + 1) for esp_id in range(len(esp_data)) if esp_data[esp_id] != []]
+        samples_counts = [(len(esp_data[int(esp_id) - 1]) / 6) for esp_id in active_esp_ids]
+        min_samples = int(min(samples_counts))
+        #print(f"QUESTO è len(samples_counts): {len(samples_counts)}")
+        #print(f"QUESTO è self.num_boards: {self.num_boards}")
+        if self.timesteps > 0 and len(samples_counts) != self.num_boards: 
+            raise UncompleteData(e_ids=self.expected_esp_ids, r_ids=active_esp_ids)
+        elif min_samples < self.timesteps:
+            raise UnsufficientSamples(e_samples=self.timesteps, r_samples=min_samples)
+
+        # Eliminates excessive data
+        for esp in range(self.num_boards):
+            data_to_eliminate = int(-6 * (samples_counts[int(esp)] - min_samples) - 1)
+            del esp_data[esp][-1:data_to_eliminate:-1]
+
+        # Conversion in list of lists format, where each sublist contains a single sample
+        unfiltered_data = []
+        for i in range(min_samples):
+            sample = []
+            for j in range(self.num_boards):
+                start = i * len(self.sensors) * len(self.axes)
+                end = start + len(self.sensors) * len(self.axes)
+                sample.extend(esp_data[j][start:end])
+            unfiltered_data.append(sample)
+        
+        # Sample reduction to 20
+        data = [[]]
+        step = (len(unfiltered_data) - 1) / (self.timesteps - 1)
+        for i in range(self.timesteps):
+            index = round(i * step)
+            for j in unfiltered_data[min(index, len(unfiltered_data) - 1)]: data[0].append(j)
+
+        return data
+
+    def delete_data_on_master(self):
+        try:
+            print("Sending DELETE request at", self.url_delete)
+            response = requests.get(self.url_delete, timeout=5)
+            if response.status_code == 200 and "OK" in response.text:
+                return True
+            else:
+                print(f"Error sending DELETE command: Status {response.status_code}, Response: {response.text}")
+                return False
+        except requests.exceptions.Timeout:
+            print(f"Timeout during DELETE request at {self.url_delete}")
+            return False
+        except requests.exceptions.RequestException as e:
+            print(f"Error during communication with Master (DELETE): {e}")
+            return False
+        except Exception as e:
+            print(f"Generic error during DELETE: {e}")
+            return False
 
 
 class Predictor:
-    def __init__(self, model, columns):
+    def __init__(self, model, url_fetch, max_fetch_attempts, retry_delay_seconds, data_processor: DataProcessor):
         self.model = model
-        self.columns = columns
+        self.data_processor = data_processor
+        self.columns = self.data_processor.generate_column_names()
         self._is_running = True
+        self.url_fetch = url_fetch
+        self.max_fetch_attempts = max_fetch_attempts
+        self.retry_delay_seconds = retry_delay_seconds
+
     """
-    def extract_data():
-        raw = 0
-        return raw
+    def extract_data(self):
+        return 0
 
     def split():
-        return 0"""
+        return 0
+    """
 
     def predict(self, kick_df):
         try:
@@ -132,119 +165,65 @@ class Predictor:
             traceback.print_exc()
 
         return prediction_result
-
+    
     def run(self):
-        cycle_counter = 0
-
         while self._is_running:
-            cycle_counter += 1
-            print(f"\n===== Ciclo {cycle_counter}: Inizio Acquisizione =====")
-            parsed_data = None; fetch_successful = False
-            delete_attempted = False; sufficient_data_received = False
             data = []
+            try:
+                response = requests.get(self.url_fetch, timeout=10)
+                response.raise_for_status()
+                raw = response.text
+                if raw == "aspettaciola":
+                    print("Waiting for the data...")
+                    #time.sleep(RETRY_DELAY_SECONDS)
+                    continue
+                elif raw == "":
+                    print("Nothing there! :(")
+                else:
+                    parsed = self.data_processor.parse_data(raw)
+                    data = self.data_processor.format_data(parsed)
 
-            # 1. Fetch Loop
-            for attempt in range(MAX_FETCH_ATTEMPTS):
-                if not self._is_running: break
-
-                print(f"Tentativo Fetch {attempt + 1}/{MAX_FETCH_ATTEMPTS}...")
-
+            except requests.exceptions.Timeout:
+                print(f"Timeout di requests.")
+                break
+            except requests.exceptions.RequestException as e:
+                print(f"Errore connessione/HTTP: {e}")
+                time.sleep(self.retry_delay_seconds)
+                continue
+            except UncompleteData as e:
+                print(f"Error raised while formatting: {e}")
+                time.sleep(self.retry_delay_seconds) 
+                continue
+            except UnsufficientSamples as e: 
+                print(f"Error raised while formatting: {e}")
+                time.sleep(self.retry_delay_seconds)
+                continue
+            except Exception as e:
+                print(f"Unexpected error: {e}")
+                traceback.print_exc()
+                self._is_running = False
+            
+            if data:
+                print(data)
                 try:
-                    response = requests.get(URL_FETCH, timeout=10)
-                    response.raise_for_status()
-                    raw = response.text
-                    print(f"QUESTI SONO I DATI RAW RICEVUTI DA RESPONSE.TEXT: {raw}")
+                    # data = self.extract_data()
+                    kick_df = pd.DataFrame(data, columns=self.columns)
+                    # Nel codice finale, qui ci va la funzione che splitta e un ciclo for per iterare in ogni calcio
 
+                    print("Pulizia buffer dati sul Master ESP...")
+                    if not self.data_processor.delete_data_on_master():
+                        print("WARN: Fallita pulizia buffer Master.")
 
-                    if not raw or not raw.strip():
-                        print("Buffer Master vuoto.")
-                        if attempt < MAX_FETCH_ATTEMPTS - 1: time.sleep(RETRY_DELAY_SECONDS)
-                        continue
-                    else:
-                        print(f"Dati ricevuti (Len: {len(raw)}). Parsing...")
-                        parsed_data = parse_data(raw, EXPECTED_ESP_IDS)
+                    result = self.predict(kick_df)
+                    print(f"---> Predizione calcio: {result} <---")
 
-                        if parsed_data:
-                            fetch_successful = True
-                            active_ids = [str(esp + 1) for esp in range(4) if parsed_data[esp]]
-                            if active_ids:
-                                #min_samples = min(len(parsed_data[esp_id]) for esp_id in active_ids) if active_ids else 0
-                                all_active_have_enough = all(len(parsed_data[int(esp_id) - 1]) >= TIMESTEPS for esp_id in active_ids)
-                                if all_active_have_enough:
-                                    print("--> Dati sufficienti ricevuti! Procedo.")
-                                    sufficient_data_received = True
-                                    break
-                                
-                                else:
-                                    print("Dati insufficienti. Attendo/Riprovo...")
-                            else:
-                                print("Parsing OK, ma nessun ESP attivo con dati.")
-                        else:
-                            print("Errore durante il parsing dei dati ricevuti.")
-
-                        if not sufficient_data_received and attempt < MAX_FETCH_ATTEMPTS - 1:
-                            time.sleep(RETRY_DELAY_SECONDS)
-
-                except requests.exceptions.Timeout:
-                    print(f"Timeout (Tentativo {attempt + 1}).")
-                    if attempt < MAX_FETCH_ATTEMPTS - 1: time.sleep(RETRY_DELAY_SECONDS)
-                except requests.exceptions.RequestException as e:
-                    print(f"Errore connessione/HTTP (Tentativo {attempt + 1}): {e}")
-                    if attempt < MAX_FETCH_ATTEMPTS - 1: time.sleep(RETRY_DELAY_SECONDS)
-                except Exception as e:
-                    print(f"Errore imprevisto fetch (Tentativo {attempt + 1}): {e}")
+                except Exception as e_df:
+                    print(f"\nERRORE durante creazione DataFrame o predizione: {e_df}")
                     traceback.print_exc()
                     self._is_running = False
 
-            if not self._is_running: break
-
-            # 2. Processa SOLO se dati sufficienti
-            if sufficient_data_received and parsed_data:
-                data = format_data(parsed_data, TIMESTEPS, NUM_BOARDS)
-                
-                if data is not None:
-                    print("Creazione DataFrame...")
-                    try:
-                        kick_df = pd.DataFrame(data, columns=self.columns)
-
-                        # --- PULIZIA DATI ESP ---
-                        print("Pulizia buffer dati sul Master ESP...")
-                        delete_attempted = True
-                        if not delete_data_on_master():
-                                print("WARN: Fallita pulizia buffer Master.")
-
-                        # 4. Esegui Predizione
-                        result = self.predict(kick_df)
-                        print(f"---> Predizione Ciclo {cycle_counter}: {result} <---")
-                    
-                    except Exception as e_df:
-                        print(f"\nERRORE durante creazione DataFrame: {e_df}")
-                        traceback.print_exc()
-                        self._is_running = False
-                        
-                else:
-                    print("Formattazione dati fallita. Impossibile procedere.")
-                    if fetch_successful and not delete_attempted:
-                        print("Tento pulizia buffer Master nonostante errore formattazione...")
-                        delete_data_on_master()
-
-            # Gestione casi fallimento Fetch / dati insufficienti
-            elif fetch_successful and parsed_data:
-                print(f"Dati insufficienti raccolti dopo {MAX_FETCH_ATTEMPTS} tentativi. Riprovo.")
-                if not delete_attempted:
-                    print("Tento pulizia buffer Master (dati insufficienti)...")
-                    delete_data_on_master()
-            elif fetch_successful and not parsed_data:
-                print("Fetch OK ma parsing fallito. Riprovo.")
-                if not delete_attempted:
-                    print("Tento pulizia buffer Master (parsing fallito)...")
-                    delete_data_on_master()
-            elif not fetch_successful:
-                print(f"Fetch fallito o interrotto dopo {MAX_FETCH_ATTEMPTS} tentativi. Riprovo.")
-
-            if self._is_running:
-                time.sleep(1)
-        print("--- Thread Worker Terminato ---")
+        if self._is_running:
+            time.sleep(1)
 
     def stop(self):
         print("Richiesta di arresto per il thread worker...") # Log Console
@@ -264,18 +243,34 @@ if __name__ == "__main__":
         traceback.print_exc()
         sys.exit(1)
 
-    df_columns = generate_column_names(TIMESTEPS)
+    data_processor = DataProcessor(
+        url_delete=URL_DELETE,
+        timesteps=TIMESTEPS,
+        num_boards=NUM_BOARDS,
+        sensors=SENSORS,
+        axes=AXES,
+        expected_esp_ids=EXPECTED_ESP_IDS
+    )
+
+    df_columns = data_processor.generate_column_names()
     if not df_columns or len(df_columns) != EXPECTED_DATA_COLUMNS:
         print("CRITICAL ERROR: Invalid column names or wrong number.")
         sys.exit(1)
 
     print("Starting the process of acquisition and prediction...")
-    worker = Predictor(model, df_columns)
+    predictor = Predictor(
+        model=model, 
+        data_processor=data_processor,
+        url_fetch=URL_FETCH,
+        max_fetch_attempts=MAX_FETCH_ATTEMPTS,
+        retry_delay_seconds=RETRY_DELAY_SECONDS
+    )
+
     try:
-        worker.run()
+        predictor.run()
     except KeyboardInterrupt:
         print("\nKeyboard interruption detected.")
-        worker.stop()
+        predictor.stop()
     except Exception as e:
         print(f"Critical error in the execution of the main worker: {e}")
         traceback.print_exc()
