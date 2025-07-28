@@ -4,6 +4,9 @@
 #include <esp_now.h>
 #include <esp_wifi.h> 
 
+#include <FS.h>
+#include <LittleFS.h>
+
 //CONFIGURAZIONE MASTER
 const int MASTER_ESP_ID = 1;
 const char *ssid = "Taekwondo-ts";
@@ -38,13 +41,29 @@ const int SAMPLES_PER_SECOND = 20;
 const unsigned long sampleIntervalMillis = 1000 / SAMPLES_PER_SECOND;
 unsigned long lastSampleTime = 0;
 
-// Accumulo Dati Aggregati 
-// Stringhe separate per ogni ESP
-String accumulatedData_ESP1 = "";
-String accumulatedData_ESP2 = "";
-String accumulatedData_ESP3 = "";
-String accumulatedData_ESP4 = "";
-bool collectingDataMaster = false; // Stato raccolta solo per il Master
+bool collectingDataMaster = false;
+
+void appendDataToFile(const String& path, const String& data) {
+  File file = LittleFS.open(path, "a");
+  if (!file) {
+    Serial.println("Errore apertura file per scrittura");
+    return;
+  }
+  if (!file.print(data)) {
+    Serial.println("Errore di scrittura su file");
+  }
+  file.close();
+}
+
+void clearDataFiles(){
+  Serial.println("Cancellazione dei file di dati precedenti... ");
+  for (int i = 1; i <= (numClients + 1); i++) {
+    String path = "/data_esp" + String(i) + ".txt";
+    if (LittleFS.exists(path)) {
+      LittleFS.remove(path);
+    }
+  }
+}
 
 // Callback invio ESP-NOW
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
@@ -73,26 +92,22 @@ void collectSensorDataMaster() {
   String data = "ID" + String(MASTER_ESP_ID) + ";"; // Aggiungi identificatore all'inizio di ogni lettura
   data += "A:" + String(accX_mps2, 4) + "," + String(accY_mps2, 4) + "," + String(accZ_mps2, 4) + ";";
   data += "G:" + String(gyroX_rads, 4) + "," + String(gyroY_rads, 4) + "," + String(gyroZ_rads, 4) + ";";
-  accumulatedData_ESP1 += data;
+  
+  appendDataToFile("/data_esp" + String(MASTER_ESP_ID) + ".txt", data);
 }
 
 // Funzione per gestire la pressione del pulsante (CON RETRY PER ESP-NOW)
 void handleButtonPress() {
   collectingDataMaster = !collectingDataMaster; // Inverti stato locale
 
-  const int NUM_RETRIES = 3; // Quante volte inviare il comando a *ciascun* client
-  const int RETRY_DELAY_MS = 20; // Pausa tra i tentativi allo *stesso* client (ms)
-  const int CLIENT_DELAY_MS = 10; // Pausa *tra client diversi* (ms)
-
   if (collectingDataMaster) {
     // INIZIO RACCOLTA 
     Serial.println("--------------------------------------------------");
     Serial.println("Pulsante Premuto: INIZIO Raccolta Dati Globale.");
-    accumulatedData_ESP1 = ""; // Pulisce il buffer del Master
-    accumulatedData_ESP2 = ""; // Pulisce anche i buffer dei client (per la visualizzazione /delete)
-    accumulatedData_ESP3 = "";
-    accumulatedData_ESP4 = "";
-    accumulatedData_ESP1 += "Start" + String(MASTER_ESP_ID) + ";"; // Marcatori specifici per ESP
+    clearDataFiles();
+
+    String startMarker = "Start" + String(MASTER_ESP_ID) + ";";
+    appendDataToFile("/data_esp" + String(MASTER_ESP_ID) + ".txt", startMarker);
     lastSampleTime = millis(); // Resetta il tempo per il campionamento del Master
 
     // Invia comando START via ESP-NOW a tutti i client con retry
@@ -118,11 +133,9 @@ void handleButtonPress() {
     // --- FINE RACCOLTA ---
     Serial.println("--------------------------------------------------");
     Serial.println("Pulsante Premuto: FINE Raccolta Dati Globale.");
-    if (accumulatedData_ESP1.endsWith(";")) { // Aggiunge End solo se ci sono stati dati
-        accumulatedData_ESP1 += "End" + String(MASTER_ESP_ID) + ";";
 
-        // Qui va inserito codice
-    }
+    String endMarker = "End" + String(MASTER_ESP_ID) + ";";
+    appendDataToFile("/data_esp" + String(MASTER_ESP_ID) + ".txt", endMarker);
 
     // Invia comando STOP via ESP-NOW a tutti i client con retry
     Serial.println("Invio comando STOP ai client...");
@@ -146,17 +159,20 @@ void handleButtonPress() {
 }
 
 void handleRoot() {
-  String aggregatedData = "";
-  // Concatena i dati da tutti gli ESP 
-  aggregatedData += accumulatedData_ESP1;
-  aggregatedData += accumulatedData_ESP2;
-  aggregatedData += accumulatedData_ESP3;
-  aggregatedData += accumulatedData_ESP4;
-
   if (collectingDataMaster) {
     server.send(200, "text/plain", "aspettaciola");
-  }
-  else {
+  } else {
+    String aggregatedData = "";
+    for (int i = 1; i <= (numClients + 1); i++) {
+      String path = "/data_esp" + String(i) + ".txt";
+      if (LittleFS.exists(path)) {
+        File file = LittleFS.open(path, "r");
+        if (file) {
+          aggregatedData += file.readString();
+          file.close();
+        }
+      }
+    }
     server.send(200, "text/plain", aggregatedData);
   }
 }
@@ -176,19 +192,8 @@ void handleSubmit() {
     return;
   }
 
-  int clientId = clientIdStr.toInt();
-  Serial.printf("Dati ricevuti da ESP ID %d\n", clientId);
-
-  // Accoda i dati al buffer corretto
-  switch (clientId) {
-    case 2: accumulatedData_ESP2 += clientData; break;
-    case 3: accumulatedData_ESP3 += clientData; break;
-    case 4: accumulatedData_ESP4 += clientData; break;
-    default:
-      Serial.printf("ID Client non valido ricevuto: %d\n", clientId);
-      server.send(400, "text/plain", "Bad Request: Invalid client ID");
-      return;
-  }
+  String path = "/data_esp" + clientIdStr + ".txt";
+  appendDataToFile(path, clientData);
 
   server.send(200, "text/plain", "OK"); // Conferma ricezione al client
 }
@@ -197,16 +202,20 @@ void handleSubmit() {
 // Gestore per eliminare tutti i dati
 void handleDelete() {
   Serial.println("Richiesta /delete ricevuta. Cancello tutti i buffer.");
-  accumulatedData_ESP1 = "";
-  accumulatedData_ESP2 = "";
-  accumulatedData_ESP3 = "";
-  accumulatedData_ESP4 = "";
+  clearDataFiles();
   server.send(200, "text/plain", "OK");
 }
 
 void setup() {
   Serial.begin(115200);
   Serial.println("\nAvvio Master ESP (ID 1)...");
+  
+  // Inizializzazione LittleFS
+  if (!LittleFS.begin(true)) {
+    Serial.println("Errore montaggio LittleFS! Blocco.");
+    while (1);
+  }
+  Serial.println("File System LittleFS montato.");
 
   // Configurazione Pin 
   pinMode(buttonPin, INPUT_PULLUP);
