@@ -172,7 +172,16 @@ void handleRoot() {
       String path = "/data_esp" + String(i) + ".txt";
       if (LittleFS.exists(path)) {
         File file = LittleFS.open(path, "r");
-        if (file) {
+        String fileContent = file.readString();
+        if (fileContent.charAt(fileContent.length() - 3) == 'd') {
+          file.close();
+          File file = LittleFS.open(path, "a");
+          String endMarker = "End" + String(i) + ";";
+          if (file.print(endMarker)) {
+              Serial.println("End marker aggiunto con successo.");
+          } else {
+            Serial.println("Errore durante l'append dell'end marker");
+          }
           aggregatedData += file.readString();
           file.close();
         }

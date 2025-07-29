@@ -116,6 +116,30 @@ class DataProcessor:
             for j in unfiltered_data[min(index, len(unfiltered_data) - 1)]: data[0].append(j)
 
         return data
+    
+    def correct_data(self, raw):
+        components = [part for part in raw.split(';') if part]
+        if not components:
+            return ""
+        correct_parts = []
+        id = None
+        for comp in components:
+            if comp.startswith('Start'):
+                if id is not None:
+                    correct_parts.append(f"End{id}")
+                match = re.search(r'\d+', comp)
+                if match:
+                    id = match.group(0)
+                correct_parts.append(comp)
+            elif comp.startswith('End'):
+                correct_parts.append(comp)
+                id = None
+            else:
+                correct_parts.append(comp)
+        if id is not None:
+            correct_parts.append(f"End{id}")
+
+        return ';'.join(correct_parts)
 
     def delete_data_on_master(self):
         try:
@@ -180,7 +204,8 @@ class Predictor:
                 elif raw == "":
                     print("Nothing there! :(")
                 else:
-                    parsed = self.data_processor.parse_data(raw)
+                    corrected = self.data_processor.correct_data(raw)
+                    parsed = self.data_processor.parse_data(corrected)
                     data = self.data_processor.format_data(parsed)
 
             except requests.exceptions.Timeout:

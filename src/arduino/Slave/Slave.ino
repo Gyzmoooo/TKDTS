@@ -4,7 +4,7 @@
 #include <HTTPClient.h> 
 #include <esp_wifi.h>
 
-const int CLIENT_ESP_ID = 4; // CAMBIA A 2, 3, o 4 
+const int CLIENT_ESP_ID = 2; // CAMBIA A 2, 3, o 4 
 const char *ssid_master = "Taekwondo-ts"; 
 const char *password_master = "123456789";   
 const int WIFI_CHANNEL = 1;                   // Deve corrispondere al canale del Master
@@ -99,7 +99,7 @@ void collectSensorDataClient(String &buffer) {
       return;
   }
 
-  if (Wire.requestFrom(MPU, 14, true); == 14) {
+  if (Wire.requestFrom(MPU, 14, true) == 14) {
       AcX = Wire.read() << 8 | Wire.read(); // Accel X (High byte | Low byte)
       AcY = Wire.read() << 8 | Wire.read(); // Accel Y
       AcZ = Wire.read() << 8 | Wire.read(); // Accel Z
