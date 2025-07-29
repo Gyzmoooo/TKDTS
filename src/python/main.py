@@ -65,7 +65,7 @@ class DataProcessor:
                         column_names.append(col_name)
         return column_names
 
-    def parse_data(self, raw_data):
+    def parse(self, raw_data):
         number_pattern = r'-?\d+\.?\d*'
         esp_data = []
         
@@ -81,8 +81,9 @@ class DataProcessor:
 
         return esp_data
 
-    def format_data(self, esp_data):
+    def format(self, esp_data):
         # Verifies data completeness and number of samples
+        #print(esp_data)
         active_esp_ids = [str(esp_id + 1) for esp_id in range(len(esp_data)) if esp_data[esp_id] != []]
         samples_counts = [(len(esp_data[int(esp_id) - 1]) / 6) for esp_id in active_esp_ids]
         min_samples = int(min(samples_counts))
@@ -117,29 +118,73 @@ class DataProcessor:
 
         return data
     
-    def correct_data(self, raw):
-        components = [part for part in raw.split(';') if part]
-        if not components:
-            return ""
-        correct_parts = []
-        id = None
-        for comp in components:
-            if comp.startswith('Start'):
-                if id is not None:
-                    correct_parts.append(f"End{id}")
-                match = re.search(r'\d+', comp)
-                if match:
-                    id = match.group(0)
-                correct_parts.append(comp)
-            elif comp.startswith('End'):
-                correct_parts.append(comp)
-                id = None
-            else:
-                correct_parts.append(comp)
-        if id is not None:
-            correct_parts.append(f"End{id}")
+    def correct(self, stringa_dati: str, num_sensori: int) -> str:
+        # Pulisce e divide i dati grezzi in singole voci, rimuovendo spazi e voci vuote.
+        voci = [v.strip() for v in stringa_dati.strip().split(';') if v.strip()]
 
-        return ';'.join(correct_parts)
+        # Un dizionario per contenere la lista delle misurazioni per ogni sensore.
+        # Una misurazione è una lista di parti di dati (es. ['A:...', 'G:...'])
+        misure_sensori = {f'ID{i}': [] for i in range(1, num_sensori + 1)}
+
+        id_corrente = None
+        misura_corrente = []
+
+        # Pattern Regex per identificare i marcatori ID (es. ID1, ID2, etc.)
+        id_pattern = re.compile(r'^ID(\d+)$')
+        # Pattern Regex per identificare i marcatori Start/End
+        marker_pattern = re.compile(r'^(Start|End)(\d+)$')
+
+        for voce in voci:
+            id_match = id_pattern.match(voce)
+            marker_match = marker_pattern.match(voce)
+
+            if id_match:
+                # Se troviamo un nuovo ID, la misurazione precedente è completa.
+                if id_corrente and misura_corrente:
+                    misure_sensori[id_corrente].append(misura_corrente)
+
+                # Inizia una nuova misurazione
+                id_corrente = voce
+                misura_corrente = []
+            elif marker_match:
+                # Se troviamo un marcatore Start/End, la misurazione precedente è completa.
+                # Questi marcatori verranno ignorati e ricostruiti da zero.
+                if id_corrente and misura_corrente:
+                    misure_sensori[id_corrente].append(misura_corrente)
+
+                # Resetta lo stato, poiché i marcatori originali indicano un'interruzione.
+                id_corrente = None
+                misura_corrente = []
+            else:
+                # Questa è una parte di dati (come 'A:...' o 'G:...')
+                if id_corrente:
+                    misura_corrente.append(voce)
+
+        # Assicura che l'ultima misurazione nella stringa venga aggiunta.
+        if id_corrente and misura_corrente:
+            misure_sensori[id_corrente].append(misura_corrente)
+
+        # Ricostruisce la stringa finale
+        blocchi_output = []
+        for i in range(1, num_sensori + 1):
+            sensor_id = f'ID{i}'
+            misure = misure_sensori.get(sensor_id)
+
+            # Procede solo se ci sono dati effettivi per questo sensore
+            if misure:
+                # Inizia il blocco per questo sensore
+                parti_blocco = [f'Start{i}']
+                for misura in misure:
+                    parti_blocco.append(sensor_id)
+                    parti_blocco.extend(misura)
+                # Termina il blocco
+                parti_blocco.append(f'End{i}')
+                blocchi_output.append(';'.join(parti_blocco))
+
+        # Unisce tutti i blocchi dei sensori con un punto e virgola e ne aggiunge uno
+        # finale per coerenza con il formato di input.
+        return ';'.join(blocchi_output) + ';' if blocchi_output else ''
+
 
     def delete_data_on_master(self):
         try:
@@ -204,9 +249,10 @@ class Predictor:
                 elif raw == "":
                     print("Nothing there! :(")
                 else:
-                    corrected = self.data_processor.correct_data(raw)
-                    parsed = self.data_processor.parse_data(corrected)
-                    data = self.data_processor.format_data(parsed)
+                    corrected = self.data_processor.correct(raw, 4)
+                    print(corrected)
+                    parsed = self.data_processor.parse(corrected)
+                    data = self.data_processor.format(parsed)
 
             except requests.exceptions.Timeout:
                 print(f"Timeout di requests.")
@@ -223,6 +269,11 @@ class Predictor:
                 print(f"Error raised while formatting: {e}")
                 time.sleep(self.retry_delay_seconds)
                 continue
+            except ValueError as e:
+                print(e)
+                time.sleep(self.retry_delay_seconds)
+                continue
+
             except Exception as e:
                 print(f"Unexpected error: {e}")
                 traceback.print_exc()
