@@ -32,6 +32,8 @@ const int sensorVccPin = 5;
 const int sensorGndPin = 6;
 const int i2cSdaPin = 8;
 const int i2cSclPin = 7;
+const int ledGround = 1;
+const int ledPin = 0;
 
 // Frequenza Campionamento 
 const int SAMPLES_PER_SECOND = 20;
@@ -45,6 +47,7 @@ String accumulatedData_ESP2 = "";
 String accumulatedData_ESP3 = "";
 String accumulatedData_ESP4 = "";
 bool collectingDataMaster = false; // Stato raccolta solo per il Master
+
 
 // Callback invio ESP-NOW
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
@@ -163,6 +166,9 @@ void handleRoot() {
 
 // Gestore per la sottomissione dati dai client
 void handleSubmit() {
+  digitalWrite(ledPin, HIGH);
+  delay(1000);
+  digitalWrite(ledPin, LOW);
   if (server.method() != HTTP_POST) {
     server.send(405, "text/plain", "Method Not Allowed");
     return;
@@ -212,6 +218,8 @@ void setup() {
   pinMode(buttonPin, INPUT_PULLUP);
   pinMode(sensorVccPin, OUTPUT); digitalWrite(sensorVccPin, HIGH);
   pinMode(sensorGndPin, OUTPUT); digitalWrite(sensorGndPin, LOW);
+  pinMode(ledGround, OUTPUT); digitalWrite(ledGround, LOW);
+  pinMode(ledPin, OUTPUT); digitalWrite(ledPin, LOW);
   Serial.println("Pin configurati.");
 
   // Inizializzazione I2C MPU6050

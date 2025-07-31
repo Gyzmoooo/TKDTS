@@ -25,7 +25,9 @@ typedef struct struct_message {
 struct_message receivedMessage;
 
 // Sensore MPU6050
-const int MPU = 0x68; 
+const int MPU = 0x68;
+const int ledGround = 1;
+const int ledPin = 0;
 const int sensorVccPin = 5; // Pin GPIO usato per alimentare VCC del sensore
 const int sensorGndPin = 6; // Pin GPIO usato per collegare GND del sensore
 const int i2cSdaPin = 8;    // Pin SDA per I2C
@@ -40,6 +42,8 @@ unsigned long lastSampleTime = 0;
 String accumulatedDataLocal = "";
 bool collectingDataClient = false; // Stato raccolta dati locale
 bool sendDataPending = false;   // Flag per indicare che i dati devono essere inviati
+
+
 
 // Callback ricezione ESP-NOW
 void OnDataRecv(const esp_now_recv_info * info, const uint8_t *incomingData, int len) {
@@ -108,7 +112,6 @@ void collectSensorDataClient() {
       float gyroY_rads = (GyY / GYRO_SENSITIVITY) * (PI / 180.0);
       float gyroZ_rads = (GyZ / GYRO_SENSITIVITY) * (PI / 180.0);
 
-
       String data = "ID" + String(CLIENT_ESP_ID) + ";";
       data += "A:" + String(accX_mps2, 4) + "," + String(accY_mps2, 4) + "," + String(accZ_mps2, 4) + ";"; // 4 cifre decimali
       data += "G:" + String(gyroX_rads, 4) + "," + String(gyroY_rads, 4) + "," + String(gyroZ_rads, 4) + ";";
@@ -116,7 +119,7 @@ void collectSensorDataClient() {
 
       // USA IL BUFFER LOCALE DEL CLIENT
       accumulatedDataLocal += data;
-
+      
       /*/ Controllo opzionale dimensione buffer (da adattare se necessario)
        if (accumulatedDataLocal.length() > 10000) { // Esempio limite
           Serial.println("WARN: Buffer locale quasi pieno, invio forzato.");
@@ -134,6 +137,7 @@ void collectSensorDataClient() {
 
 // Funzione per inviare dati al Master via HTTP POST
 void sendDataToMaster() {
+
   if (WiFi.status() == WL_CONNECTED) {
     Serial.print("Invio dati al Master via HTTP POST a: "); Serial.println(masterUrl);
     // Debug: Stampa solo i primi N caratteri per evitare flood se i dati sono tanti
@@ -143,7 +147,7 @@ void sendDataToMaster() {
     http.begin(masterUrl); // Specifica URL completo (include già ?id=X)
     http.addHeader("Content-Type", "text/plain"); // Il Master si aspetta plain text nel corpo
     // Potresti voler aumentare il timeout per l'invio di grandi quantità di dati
-    // http.setTimeout(15000); // Esempio: 15 secondi
+    http.setTimeout(15000); // Esempio: 15 secondi
 
     int httpCode = http.POST(accumulatedDataLocal); // Invia i dati accumulati nel corpo della richiesta
 
@@ -156,6 +160,7 @@ void sendDataToMaster() {
         Serial.println("Dati inviati con successo al Master.");
         accumulatedDataLocal = ""; // *** Pulisce buffer locale SOLO dopo invio confermato con successo ***
         sendDataPending = false;   // Resetta il flag dopo l'invio riuscito
+
       } else {
          Serial.printf("Errore dal server Master durante l'invio (Codice HTTP: %d). I dati NON sono stati cancellati localmente.\n", httpCode);
          // Non puliamo il buffer, i dati verranno ritentati al prossimo comando STOP.
@@ -185,6 +190,9 @@ void setup() {
   Serial.println("Configurazione pin sensore...");
   pinMode(sensorVccPin, OUTPUT); digitalWrite(sensorVccPin, HIGH);
   pinMode(sensorGndPin, OUTPUT); digitalWrite(sensorGndPin, LOW);
+  pinMode(ledGround, OUTPUT); digitalWrite(ledGround, LOW);
+  pinMode(ledPin, OUTPUT); digitalWrite(ledPin, LOW);
+
   delay(100); // Attesa stabilizzazione alimentazione
 
   Serial.printf("\n--- Avvio Client ESP-NOW con Sensore (ID %d) ---\n", CLIENT_ESP_ID);
@@ -295,6 +303,7 @@ void loop() {
       lastSampleTime = currentTime; // Aggiorna l'ultimo tempo di campionamento
       collectSensorDataClient();    // *** CHIAMA LA FUNZIONE PER LEGGERE IL SENSORE ***
     }
+
   }
 
   // --- Invio Dati ---
