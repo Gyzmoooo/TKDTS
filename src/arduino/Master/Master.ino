@@ -169,19 +169,28 @@ void handleRoot() {
   if (collectingDataMaster) {
     server.send(200, "text/plain", "aspettaciola");
   } else {
-    String aggregatedData = "";
-    for (int i = 1; i <= (numClients + 1); i++) {
+    // Inizia lo streaming della risposta senza definire una lunghezza totale
+    server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+    server.send(200, "text/plain", ""); // Invia solo gli header HTTP per aprire la connessione
 
+    // Itera su tutti i file di dati (Master + Slaves)
+    for (int i = 1; i <= (numClients + 1); i++) {
       String path = "/data_esp" + String(i) + ".txt";
+      
       if (LittleFS.exists(path)) {
         File file = LittleFS.open(path, "r");
         if (file) {
-          aggregatedData += file.readString();
+          // Invia il contenuto del file in piccoli blocchi (linea per linea)
+          // senza mai caricarlo tutto in memoria.
+          while (file.available()) {
+            server.sendContent(file.readStringUntil('\n') + "\n");
+          }
           file.close();
         }
       }
     }
-    server.send(200, "text/plain", aggregatedData);
+    
+    server.sendContent(""); // Invia un blocco vuoto per segnalare la fine dello stream
   }
 }
 
