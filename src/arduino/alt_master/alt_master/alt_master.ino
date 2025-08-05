@@ -35,8 +35,6 @@ const int sensorVccPin = 5;
 const int sensorGndPin = 6;
 const int i2cSdaPin = 8;
 const int i2cSclPin = 7;
-const int ledGround = 1;
-const int ledPin = 0;
 
 // Frequenza Campionamento 
 const int SAMPLES_PER_SECOND = 20;
@@ -70,7 +68,6 @@ void clearDataFiles(){
     }
   }
 }
-
 
 // Callback invio ESP-NOW
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
@@ -175,7 +172,16 @@ void handleRoot() {
       String path = "/data_esp" + String(i) + ".txt";
       if (LittleFS.exists(path)) {
         File file = LittleFS.open(path, "r");
-        if (file) {
+        String fileContent = file.readString();
+        if (fileContent.charAt(fileContent.length() - 3) == 'd') {
+          file.close();
+          File file = LittleFS.open(path, "a");
+          String endMarker = "End" + String(i) + ";";
+          if (file.print(endMarker)) {
+              Serial.println("End marker aggiunto con successo.");
+          } else {
+            Serial.println("Errore durante l'append dell'end marker");
+          }
           aggregatedData += file.readString();
           file.close();
         }
@@ -187,10 +193,6 @@ void handleRoot() {
 
 // Gestore per la sottomissione dati dai client
 void handleSubmit() {
-  /*
-  digitalWrite(ledPin, HIGH);
-  delay(1000);
-  digitalWrite(ledPin, LOW);*/
   if (server.method() != HTTP_POST) {
     server.send(405, "text/plain", "Method Not Allowed");
     return;
@@ -233,8 +235,6 @@ void setup() {
   pinMode(buttonPin, INPUT_PULLUP);
   pinMode(sensorVccPin, OUTPUT); digitalWrite(sensorVccPin, HIGH);
   pinMode(sensorGndPin, OUTPUT); digitalWrite(sensorGndPin, LOW);
-  pinMode(ledGround, OUTPUT); digitalWrite(ledGround, LOW);
-  pinMode(ledPin, OUTPUT); digitalWrite(ledPin, LOW);
   Serial.println("Pin configurati.");
 
   // Inizializzazione I2C MPU6050

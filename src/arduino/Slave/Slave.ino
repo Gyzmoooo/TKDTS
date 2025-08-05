@@ -2,21 +2,23 @@
 #include <Wire.h>      
 #include <esp_now.h>
 #include <HTTPClient.h> 
-#include <esp_wifi.h>   
+#include <esp_wifi.h>
 
-
-
-const int CLIENT_ESP_ID = 4; // CAMBIA A 2, 3, o 4 
+const int CLIENT_ESP_ID = 2; // CAMBIA A 2, 3, o 4 
 const char *ssid_master = "Taekwondo-ts"; 
 const char *password_master = "123456789";   
 const int WIFI_CHANNEL = 1;                   // Deve corrispondere al canale del Master
-
-
 
 uint8_t masterMac[] = {0xE4, 0xB3, 0x23, 0xD3, 0xA4, 0xD4}; //e4:b3:23:d3:a4:d4
 
 // URL del Master per inviare dati (usa l'IP fisso dell'AP del Master: 192.168.4.1)
 String masterUrl = "http://192.168.4.1/submit?id=" + String(CLIENT_ESP_ID);
+
+const int SAMPLES_PER_CHUNK = 20; // Invia dati ogni 20 campioni
+
+String dataChunkBuffer = "";          // Buffer per accumulare il chunk di dati
+int sampleCounter = 0;                // Contatore per i campioni nel buffer attuale
+bool collectingDataClient = false;    // Stato raccolta dati locale
 
 // Struttura per i messaggi ESP-NOW 
 typedef struct struct_message {
@@ -38,59 +40,70 @@ const int SAMPLES_PER_SECOND = 20;
 const unsigned long sampleIntervalMillis = 1000 / SAMPLES_PER_SECOND;
 unsigned long lastSampleTime = 0;
 
-// Accumulo Dati Locale & Stato
-String accumulatedDataLocal = "";
-bool collectingDataClient = false; // Stato raccolta dati locale
-bool sendDataPending = false;   // Flag per indicare che i dati devono essere inviati
+void sendDataChunk(const String& chunk) {
+  if (WiFi.status() == WL_CONNECTED && chunk.length() > 0) {
+    HTTPClient http;
+    http.begin(masterUrl);
+    http.addHeader("Content-Type", "text/plain");
 
+    int httpCode = http.POST(chunk);
 
+    if (httpCode > 0) {
+      digitalWrite(ledPin, HIGH);
+      delay(10);
+      digitalWrite(ledPin, LOW);
+      if (httpCode != HTTP_CODE_OK) {
+        Serial.printf("[HTTP] Errore invio chunk, codice: %d\n", httpCode);   
+      }
+    } else {
+      Serial.printf("[HTTP] Invio fallito, errore %s\n", http.errorToString(httpCode).c_str());
+    }
+    http.end();
+  } else if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi non connesso, chunk scartato.");
+  }
+}
 
 // Callback ricezione ESP-NOW
 void OnDataRecv(const esp_now_recv_info * info, const uint8_t *incomingData, int len) {
-  if (len == sizeof(struct_message)) {
-    memcpy(&receivedMessage, incomingData, sizeof(struct_message));
-    Serial.print("Comando ricevuto via ESP-NOW: ");
-    Serial.println(receivedMessage.command);
+  memcpy(&receivedMessage, incomingData, sizeof(struct_message));
+  Serial.print("Comando ricevuto via ESP-NOW: ");
+  Serial.println(receivedMessage.command);
 
-    if (strcmp(receivedMessage.command, "START") == 0) {
-      if (!collectingDataClient) {
-         Serial.println("Ricevuto START: Inizio raccolta dati MPU6050.");
-         collectingDataClient = true;
-         accumulatedDataLocal = ""; // Pulisce buffer da eventuali dati precedenti
-         accumulatedDataLocal += "Start" + String(CLIENT_ESP_ID) + ";"; // Marcatore inizio
-         lastSampleTime = millis(); // Inizia il timer per il primo campionamento
-      } else {
-         Serial.println("Ricevuto START, ma la raccolta è già attiva. Ignorato.");
-      }
-    } else if (strcmp(receivedMessage.command, "STOP") == 0) {
-      if (collectingDataClient) {
-        Serial.println("Ricevuto STOP: Fine raccolta dati MPU6050.");
-        collectingDataClient = false;
-        accumulatedDataLocal += "End" + String(CLIENT_ESP_ID) + ";"; // Marcatore fine
-        sendDataPending = true; // Imposta flag per inviare i dati nel loop principale
-      } else {
-         Serial.println("Ricevuto STOP, ma la raccolta era già ferma. Ignorato.");
-      }
+  if (strcmp(receivedMessage.command, "START") == 0) {
+    if (!collectingDataClient) {
+        Serial.println("Ricevuto START: Inizio raccolta dati MPU6050.");
+        collectingDataClient = true;
+        dataChunkBuffer = ""; // Pulisce buffer
+        sampleCounter = 0;    // Resetta il contatore
+        dataChunkBuffer += "Start" + String(CLIENT_ESP_ID) + ";"; // Marcatore inizio
+        lastSampleTime = millis(); // Inizia il timer per il primo campionamento
     }
-  } else {
-     Serial.printf("Ricevuto pacchetto ESP-NOW di lunghezza errata (%d byte invece di %d).\n", len, sizeof(struct_message));
+  } else if (strcmp(receivedMessage.command, "STOP") == 0) {
+    if (collectingDataClient) {
+      Serial.println("Ricevuto STOP: Fine raccolta dati MPU6050.");
+      collectingDataClient = false;
+      dataChunkBuffer += "End" + String(CLIENT_ESP_ID) + ";"; // Marcatore fine
+
+      // Invia l'ultimo blocco di dati rimanente, se presente
+      sendDataChunk(dataChunkBuffer);
+      dataChunkBuffer = "";
+    }
   }
 }
 
 // Funzione per raccogliere dati dal sensore MPU6050 
-void collectSensorDataClient() {
+void collectSensorDataClient(String &buffer) {
   int16_t AcX, AcY, AcZ, GyX, GyY, GyZ; // Variabili per dati grezzi
 
   Wire.beginTransmission(MPU);
   Wire.write(0x3B);
   if (Wire.endTransmission(false) != 0) { 
       Serial.println("Errore I2C endTransmission pre-lettura MPU6050");
-      return; // Esce dalla funzione se c'è errore
+      return;
   }
 
-  int bytesRead = Wire.requestFrom(MPU, 14, true); // true = rilascia il bus dopo lettura
-  if (bytesRead == 14) {
-      // dati grezzi
+  if (Wire.requestFrom(MPU, 14, true) == 14) {
       AcX = Wire.read() << 8 | Wire.read(); // Accel X (High byte | Low byte)
       AcY = Wire.read() << 8 | Wire.read(); // Accel Y
       AcZ = Wire.read() << 8 | Wire.read(); // Accel Z
@@ -116,70 +129,9 @@ void collectSensorDataClient() {
       data += "A:" + String(accX_mps2, 4) + "," + String(accY_mps2, 4) + "," + String(accZ_mps2, 4) + ";"; // 4 cifre decimali
       data += "G:" + String(gyroX_rads, 4) + "," + String(gyroY_rads, 4) + "," + String(gyroZ_rads, 4) + ";";
 
-
-      // USA IL BUFFER LOCALE DEL CLIENT
-      accumulatedDataLocal += data;
-      
-      /*/ Controllo opzionale dimensione buffer (da adattare se necessario)
-       if (accumulatedDataLocal.length() > 10000) { // Esempio limite
-          Serial.println("WARN: Buffer locale quasi pieno, invio forzato.");
-          collectingDataClient = false; // Ferma raccolta
-          accumulatedDataLocal += "End" + String(CLIENT_ESP_ID) + "_Forced;"; // Marcatore speciale
-          sendDataPending = true;
-       }*/
-
-  } else {
-      Serial.printf("Errore I2C: Letti %d byte invece di 14 da MPU6050\n", bytesRead);
-      
-  }
-}
-
-
-// Funzione per inviare dati al Master via HTTP POST
-void sendDataToMaster() {
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("Invio dati al Master via HTTP POST a: "); Serial.println(masterUrl);
-    // Debug: Stampa solo i primi N caratteri per evitare flood se i dati sono tanti
-    // Serial.print("Dati (inizio): "); Serial.println(accumulatedDataLocal.substring(0, 100));
-
-    HTTPClient http;
-    http.begin(masterUrl); // Specifica URL completo (include già ?id=X)
-    http.addHeader("Content-Type", "text/plain"); // Il Master si aspetta plain text nel corpo
-    // Potresti voler aumentare il timeout per l'invio di grandi quantità di dati
-    http.setTimeout(15000); // Esempio: 15 secondi
-
-    int httpCode = http.POST(accumulatedDataLocal); // Invia i dati accumulati nel corpo della richiesta
-
-    if (httpCode > 0) { // Controlla se c'è stata una risposta HTTP valida
-      String payload = http.getString(); // Ottieni la risposta dal server (dovrebbe essere "OK")
-      Serial.printf("[HTTP] Codice risposta POST: %d\n", httpCode);
-      Serial.printf("[HTTP] Risposta dal Master: %s\n", payload.c_str());
-
-      if (httpCode == HTTP_CODE_OK) { // HTTP 200 OK (il Master ha ricevuto e processato correttamente)
-        Serial.println("Dati inviati con successo al Master.");
-        accumulatedDataLocal = ""; // *** Pulisce buffer locale SOLO dopo invio confermato con successo ***
-        sendDataPending = false;   // Resetta il flag dopo l'invio riuscito
-
-      } else {
-         Serial.printf("Errore dal server Master durante l'invio (Codice HTTP: %d). I dati NON sono stati cancellati localmente.\n", httpCode);
-         // Non puliamo il buffer, i dati verranno ritentati al prossimo comando STOP.
-         // Resettiamo comunque il flag per evitare loop di tentativi falliti.
-         sendDataPending = false;
-      }
-    } else {
-      // Errore a livello di connessione HTTP (es. server non raggiungibile, timeout, errore DNS)
-      Serial.printf("[HTTP] Invio POST fallito, errore HTTPClient: %s\n", http.errorToString(httpCode).c_str());
-      // I dati non vengono cancellati, verranno ritentati al prossimo STOP.
-      sendDataPending = false; // Resetta il flag per evitare loop di tentativi falliti
-    }
-    http.end(); // Rilascia le risorse usate da HTTPClient
-  } else {
-    Serial.println("WiFi non connesso. Impossibile inviare dati ora. Riproverò al prossimo STOP.");
-    // I dati rimangono in accumulatedDataLocal.
-    // Resetta il flag per evitare tentativi continui senza WiFi.
-    sendDataPending = false;
-  }
+      // Aggiunge i dati al buffer passato come riferimento
+      buffer += data;
+  } 
 }
 
 
@@ -292,25 +244,24 @@ void setup() {
    // Se usi il LED, fai un lampeggio lento qui per indicare setup completo.
 }
 
-
 void loop() {
   // --- Raccolta Dati ---
-  // Controlla se dobbiamo raccogliere dati e se è passato l'intervallo di campionamento
   if (collectingDataClient) {
     unsigned long currentTime = millis();
+
     // Esegue la lettura solo se è passato abbastanza tempo dall'ultima
     if (currentTime - lastSampleTime >= sampleIntervalMillis) {
       lastSampleTime = currentTime; // Aggiorna l'ultimo tempo di campionamento
-      collectSensorDataClient();    // *** CHIAMA LA FUNZIONE PER LEGGERE IL SENSORE ***
+      collectSensorDataClient(dataChunkBuffer);    // *** CHIAMA LA FUNZIONE PER LEGGERE IL SENSORE ***
+      sampleCounter++;
+
+      if (sampleCounter >= SAMPLES_PER_CHUNK) {
+        sendDataChunk(dataChunkBuffer);
+
+        dataChunkBuffer = "";
+        sampleCounter = 0;
+      }
     }
-
-  }
-
-  // --- Invio Dati ---
-  // Controlla se c'è una richiesta di invio pendente (impostata da OnDataRecv su STOP)
-  if (sendDataPending) {
-     sendDataToMaster(); // Chiama la funzione che tenta l'invio via HTTP POST
-     // sendDataPending viene resettato all'interno di sendDataToMaster()
   }
 
   // Piccolo delay per dare respiro al processore
