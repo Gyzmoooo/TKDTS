@@ -118,74 +118,6 @@ class DataProcessor:
 
         return data
     
-    def correct(self, stringa_dati: str, num_sensori: int) -> str:
-        # Pulisce e divide i dati grezzi in singole voci, rimuovendo spazi e voci vuote.
-        voci = [v.strip() for v in stringa_dati.strip().split(';') if v.strip()]
-
-        # Un dizionario per contenere la lista delle misurazioni per ogni sensore.
-        # Una misurazione è una lista di parti di dati (es. ['A:...', 'G:...'])
-        misure_sensori = {f'ID{i}': [] for i in range(1, num_sensori + 1)}
-
-        id_corrente = None
-        misura_corrente = []
-
-        # Pattern Regex per identificare i marcatori ID (es. ID1, ID2, etc.)
-        id_pattern = re.compile(r'^ID(\d+)$')
-        # Pattern Regex per identificare i marcatori Start/End
-        marker_pattern = re.compile(r'^(Start|End)(\d+)$')
-
-        for voce in voci:
-            id_match = id_pattern.match(voce)
-            marker_match = marker_pattern.match(voce)
-
-            if id_match:
-                # Se troviamo un nuovo ID, la misurazione precedente è completa.
-                if id_corrente and misura_corrente:
-                    misure_sensori[id_corrente].append(misura_corrente)
-
-                # Inizia una nuova misurazione
-                id_corrente = voce
-                misura_corrente = []
-            elif marker_match:
-                # Se troviamo un marcatore Start/End, la misurazione precedente è completa.
-                # Questi marcatori verranno ignorati e ricostruiti da zero.
-                if id_corrente and misura_corrente:
-                    misure_sensori[id_corrente].append(misura_corrente)
-
-                # Resetta lo stato, poiché i marcatori originali indicano un'interruzione.
-                id_corrente = None
-                misura_corrente = []
-            else:
-                # Questa è una parte di dati (come 'A:...' o 'G:...')
-                if id_corrente:
-                    misura_corrente.append(voce)
-
-        # Assicura che l'ultima misurazione nella stringa venga aggiunta.
-        if id_corrente and misura_corrente:
-            misure_sensori[id_corrente].append(misura_corrente)
-
-        # Ricostruisce la stringa finale
-        blocchi_output = []
-        for i in range(1, num_sensori + 1):
-            sensor_id = f'ID{i}'
-            misure = misure_sensori.get(sensor_id)
-
-            # Procede solo se ci sono dati effettivi per questo sensore
-            if misure:
-                # Inizia il blocco per questo sensore
-                parti_blocco = [f'Start{i}']
-                for misura in misure:
-                    parti_blocco.append(sensor_id)
-                    parti_blocco.extend(misura)
-                # Termina il blocco
-                parti_blocco.append(f'End{i}')
-                blocchi_output.append(';'.join(parti_blocco))
-
-        # Unisce tutti i blocchi dei sensori con un punto e virgola e ne aggiunge uno
-        # finale per coerenza con il formato di input.
-        return ';'.join(blocchi_output) + ';' if blocchi_output else ''
-
-
     def delete_data_on_master(self):
         try:
             print("Sending DELETE request at", self.url_delete)
@@ -249,9 +181,7 @@ class Predictor:
                 elif raw == "":
                     print("Nothing there! :(")
                 else:
-                    corrected = self.data_processor.correct(raw, 4)
-                    print(corrected)
-                    parsed = self.data_processor.parse(corrected)
+                    parsed = self.data_processor.parse(raw)
                     data = self.data_processor.format(parsed)
 
             except requests.exceptions.Timeout:
