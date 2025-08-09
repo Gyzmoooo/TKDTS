@@ -141,8 +141,8 @@ void handleButtonPress() {
     Serial.println("--------------------------------------------------");
     Serial.println("Pulsante Premuto: FINE Raccolta Dati Globale.");
 
-    String endMarker = "End" + String(MASTER_ESP_ID) + ";";
-    appendDataToFile("/data_esp" + String(MASTER_ESP_ID) + ".txt", endMarker);
+    //String endMarker = "End" + String(MASTER_ESP_ID) + ";";
+    //appendDataToFile("/data_esp" + String(MASTER_ESP_ID) + ".txt", endMarker);
 
     // Invia comando STOP via ESP-NOW a tutti i client con retry
     Serial.println("Invio comando STOP ai client...");
@@ -183,7 +183,8 @@ void handleRoot() {
           // Invia il contenuto del file in piccoli blocchi (linea per linea)
           // senza mai caricarlo tutto in memoria.
           while (file.available()) {
-            server.sendContent(file.readStringUntil('\n') + "\n");
+            String endMarker = "End" + String(i) + ";";
+            server.sendContent(file.readStringUntil('\n') + endMarker);
           }
           file.close();
         }

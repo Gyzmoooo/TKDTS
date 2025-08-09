@@ -37,8 +37,8 @@ def extract_value_from_line(line):
         print(f"  WARN: Errore generico estrazione valore da riga '{line.strip()}': {e}")
         return None
 
-for i in os.listdir("C:\\Users\\giuli\\Desktop\\Code\\TKDTS\\txt"):
-    FILE_PATH = f"C:\\Users\\giuli\\Desktop\\Code\\TKDTS\\txt\\{i}"
+for i in os.listdir("C:\\Users\\giuli\\Desktop\\Code\\TKDTS\\data"):
+    FILE_PATH = f"C:\\Users\\giuli\\Desktop\\Code\\TKDTS\\data\\{i}"
 
     # --- Lettura e Parsing del File ---
     a3_x_values = []

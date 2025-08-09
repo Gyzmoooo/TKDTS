@@ -151,10 +151,18 @@ class Predictor:
     """
     def extract_data(self):
         return 0
-
-    def split():
-        return 0
     """
+
+        
+    def split(self, ):
+        df = pd.read_csv("training-data.csv")
+        df = df.drop("Nome", axis=1)
+        n = 48
+        mean_start = list(df.iloc[:, :n].mean())
+        mean_end = list(df.iloc[:, -n:].mean())
+
+        return 0
+    
 
     def predict(self, kick_df):
         try:

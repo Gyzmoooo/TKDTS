@@ -4,7 +4,7 @@
 #include <HTTPClient.h> 
 #include <esp_wifi.h>
 
-const int CLIENT_ESP_ID = 2; // CAMBIA A 2, 3, o 4 
+const int CLIENT_ESP_ID = 4; // CAMBIA A 2, 3, o 4 
 const char *ssid_master = "Taekwondo-ts"; 
 const char *password_master = "123456789";   
 const int WIFI_CHANNEL = 1;                   // Deve corrispondere al canale del Master
@@ -14,7 +14,7 @@ uint8_t masterMac[] = {0xE4, 0xB3, 0x23, 0xD3, 0xA4, 0xD4}; //e4:b3:23:d3:a4:d4
 // URL del Master per inviare dati (usa l'IP fisso dell'AP del Master: 192.168.4.1)
 String masterUrl = "http://192.168.4.1/submit?id=" + String(CLIENT_ESP_ID);
 
-const int SAMPLES_PER_CHUNK = 20; // Invia dati ogni 20 campioni
+const int SAMPLES_PER_CHUNK = 40; // Invia dati ogni 20 campioni
 
 String dataChunkBuffer = "";          // Buffer per accumulare il chunk di dati
 int sampleCounter = 0;                // Contatore per i campioni nel buffer attuale
@@ -40,28 +40,49 @@ const int SAMPLES_PER_SECOND = 20;
 const unsigned long sampleIntervalMillis = 1000 / SAMPLES_PER_SECOND;
 unsigned long lastSampleTime = 0;
 
+// In Slave.ino, SOSTITUISCI la vecchia funzione sendDataChunk con questa:
+
 void sendDataChunk(const String& chunk) {
-  if (WiFi.status() == WL_CONNECTED && chunk.length() > 0) {
-    HTTPClient http;
-    http.begin(masterUrl);
-    http.addHeader("Content-Type", "text/plain");
-
-    int httpCode = http.POST(chunk);
-
-    if (httpCode > 0) {
-      digitalWrite(ledPin, HIGH);
-      delay(10);
-      digitalWrite(ledPin, LOW);
-      if (httpCode != HTTP_CODE_OK) {
-        Serial.printf("[HTTP] Errore invio chunk, codice: %d\n", httpCode);   
-      }
-    } else {
-      Serial.printf("[HTTP] Invio fallito, errore %s\n", http.errorToString(httpCode).c_str());
-    }
-    http.end();
-  } else if (WiFi.status() != WL_CONNECTED) {
+  if (WiFi.status() != WL_CONNECTED) {
     Serial.println("WiFi non connesso, chunk scartato.");
+    return;
   }
+  if (chunk.length() == 0) {
+    return;
+  }
+
+  HTTPClient http;
+  http.begin(masterUrl);
+  http.addHeader("Content-Type", "text/plain");
+
+  // 1. IMPOSTA UN TIMEOUT BREVE (in millisecondi)
+  // Se non riceve risposta entro 750ms, la richiesta fallisce senza bloccare lo slave a lungo.
+  http.setTimeout(750);
+
+  int httpCode = 0;
+  const int MAX_RETRIES = 2; // Tenta l'invio al massimo 2 volte
+
+  // 2. AGGIUNGI UN CICLO DI RETRY
+  for (int i = 0; i < MAX_RETRIES; i++) {
+    httpCode = http.POST(chunk);
+
+    if (httpCode == HTTP_CODE_OK) {
+      // Successo! Esci dal ciclo.
+      break; 
+    } else {
+      // Fallimento: stampa l'errore e attendi un istante prima di riprovare.
+      Serial.printf("[HTTP] Tentativo %d/%d fallito. Codice: %d, Errore: %s\n", 
+                    i + 1, MAX_RETRIES, httpCode, http.errorToString(httpCode).c_str());
+      delay(50); // Piccola pausa prima del prossimo tentativo
+    }
+  }
+
+  // Stampa un messaggio finale solo se tutti i tentativi sono falliti.
+  if (httpCode != HTTP_CODE_OK) {
+    Serial.println("[HTTP] Invio del chunk fallito definitivamente dopo tutti i tentativi.");
+  }
+
+  http.end();
 }
 
 // Callback ricezione ESP-NOW
