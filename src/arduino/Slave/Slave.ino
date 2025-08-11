@@ -188,6 +188,12 @@ void setup() {
       // Aggiungi qui il lampeggio LED di successo MPU se usi il debug LED
   }
 
+  // Configura il filtro passa-basso digitale (DLPF)
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x1A); // Registro CONFIG
+  // 0x04 per una bandwidth di circa 20 Hz.
+  Wire.write(0x04);
+
   // Imposta sensibilità (come Master e come Slave originale)
   Wire.beginTransmission(MPU); Wire.write(0x1C); Wire.write(0x18); Wire.endTransmission(true);
   Wire.beginTransmission(MPU); Wire.write(0x1B); Wire.write(0x10); Wire.endTransmission(true);

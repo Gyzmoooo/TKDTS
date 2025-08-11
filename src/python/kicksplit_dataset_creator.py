@@ -6,7 +6,7 @@ NUM_BOARDS = 4
 SENSORS = ['A', 'G']
 AXES = ['x', 'y', 'z']
 
-df = pd.read_csv("training-data.csv")
+df = pd.read_csv("kicks_classification.csv")
 df = df.drop("Nome", axis=1)
 
 class KickSplitCreator:
@@ -35,13 +35,15 @@ class KickSplitCreator:
     def extract_from_row(self):
         for i in range(self.timesteps - 1):
             single_kick_data = self.array[self.counter * self.single_sample:(self.counter * self.single_sample + self.num_cols_out * self.single_sample)].astype(str)
-            if self.counter == 0: classe = "Inizio"
-            elif self.counter == 18: classe = "Fine"
-            else: classe = "Calcio"
-            single_kick_data = np.insert(single_kick_data, 0, classe)
-            self.counter += 1
-            self.out_df.loc[len(self.out_df)] = single_kick_data
-
+            if self.counter == 0 or self.counter == 1: classe = "Still"
+            elif self.counter == 18 or self.counter == 19: classe = "Still"
+            else: classe = "Kick"
+            if self.counter != 1:
+                single_kick_data = np.insert(single_kick_data, 0, classe)
+                self.counter += 1
+                self.out_df.loc[len(self.out_df)] = single_kick_data
+            else: 
+                self.counter += 1
 
     def run(self):
         self.out_df = pd.DataFrame(columns=self.generate_column_names())
@@ -62,9 +64,9 @@ if __name__ == "__main__":
         sensors=SENSORS,
         axes=AXES,
         dataframe=df,
-        num_cols_out=2,
+        num_cols_out=1,
         counter=count)
 
     out_df = dc.run()
 
-    out_df.to_csv('kicksplit_dataset.csv', index=False)
+    out_df.to_csv('kicksplit_dataset_1sample.csv', index=False)
