@@ -14,7 +14,7 @@ uint8_t masterMac[] = {0xE4, 0xB3, 0x23, 0xD3, 0xA4, 0xD4}; //e4:b3:23:d3:a4:d4
 // URL del Master per inviare dati (usa l'IP fisso dell'AP del Master: 192.168.4.1)
 String masterUrl = "http://192.168.4.1/submit?id=" + String(CLIENT_ESP_ID);
 
-const int SAMPLES_PER_CHUNK = 40; // Invia dati ogni 20 campioni
+const int SAMPLES_PER_CHUNK = 40; // Invia dati ogni 40 campioni
 
 String dataChunkBuffer = "";          // Buffer per accumulare il chunk di dati
 int sampleCounter = 0;                // Contatore per i campioni nel buffer attuale
@@ -188,11 +188,11 @@ void setup() {
       // Aggiungi qui il lampeggio LED di successo MPU se usi il debug LED
   }
 
+  /*
   // Configura il filtro passa-basso digitale (DLPF)
-  Wire.beginTransmission(MPU_ADDR);
   Wire.write(0x1A); // Registro CONFIG
   // 0x04 per una bandwidth di circa 20 Hz.
-  Wire.write(0x04);
+  Wire.write(0x03);*/
 
   // Imposta sensibilità (come Master e come Slave originale)
   Wire.beginTransmission(MPU); Wire.write(0x1C); Wire.write(0x18); Wire.endTransmission(true);

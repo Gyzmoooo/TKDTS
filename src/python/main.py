@@ -7,6 +7,7 @@ import os
 import requests
 import pandas as pd
 from joblib import load
+import numpy as np
 
 # --- Costanti e Configurazioni 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -148,22 +149,126 @@ class Predictor:
         self.max_fetch_attempts = max_fetch_attempts
         self.retry_delay_seconds = retry_delay_seconds
 
-    """
-    def extract_data(self):
-        return 0
-    """
-
+    def compute_svm(self, df):
+        out_array = np.array()
+        in_array = df.to_numpy()
         
-    def split(self, ):
-        df = pd.read_csv("training-data.csv")
-        df = df.drop("Nome", axis=1)
-        n = 48
-        mean_start = list(df.iloc[:, :n].mean())
-        mean_end = list(df.iloc[:, -n:].mean())
-
-        return 0
+        for row in in_array:
+            temp_list = []
+            for column in range(1, len(row), 3):
+                smv = np.sqrt(row[column]**2 + row[column+1]**2 + row[column+2]**2)
+                temp_list.append(smv)
+            out_array = np.append(out_array, temp_list)
+        
+        return out_array
     
+    def classify_sample(self, smv_array, threshold):
+        if np.mean(smv_array) > threshold:
+            return "Calcio"
+        return "Fermo"
+    
+    def crea_gruppi_(dati_input, dimensione_gruppo=20, min_calcio_len=2):
+        """
+        Crea gruppi di dimensione fissa garantita, senza sovrapposizioni di indici.
+        I gruppi sono centrati solo su blocchi di "Calcio" con una lunghezza minima.
 
+        Args:
+            dati_input (np.ndarray): L'array 1D con etichette "Calcio" e "Fermo".
+            dimensione_gruppo (int): La dimensione esatta di ogni gruppo.
+            min_calcio_len (int): La lunghezza minima di una sequenza di "Calcio"
+                                per poter essere considerata come centro di un gruppo.
+
+        Returns:
+            list: Una lista di liste, dove ogni lista interna è un gruppo di tuple
+                (etichetta, indice_originale).
+        """
+        
+        # 1. Identifica tutti i blocchi (Fermo e Calcio)
+        blocchi = []
+        if len(dati_input) == 0: return []
+        label_corrente, start_index = dati_input[0], 0
+        for i in range(1, len(dati_input)):
+            if dati_input[i] != label_corrente:
+                blocchi.append({'label': label_corrente, 'start': start_index, 'end': i})
+                label_corrente, start_index = dati_input[i], i
+        blocchi.append({'label': label_corrente, 'start': start_index, 'end': len(dati_input)})
+
+        # 2. Filtra per tenere solo i blocchi di Calcio che superano la lunghezza minima
+        blocchi_calcio_validi = [
+            b for b in blocchi 
+            if b['label'] == 'Calcio' and (b['end'] - b['start']) >= min_calcio_len
+        ]
+
+        gruppi_finali = []
+        ultimo_indice_usato = -1
+
+        # 3. Itera sui blocchi di Calcio validi per costruire i gruppi sequenzialmente
+        for calcio_block in blocchi_calcio_validi:
+            calcio_start = calcio_block['start']
+            
+            # Se questo blocco di Calcio è già stato "consumato" dal padding del gruppo precedente, saltalo
+            if calcio_start <= ultimo_indice_usato:
+                continue
+
+            calcio_end = calcio_block['end']
+            num_calcio = calcio_end - calcio_start
+
+            if num_calcio >= dimensione_gruppo:
+                # Se il blocco è già di 20 o più, non c'è spazio per padding.
+                # Il gruppo sarà composto solo dal blocco di Calcio.
+                start_gruppo, end_gruppo = calcio_start, calcio_end
+            else:
+                padding_necessario = dimensione_gruppo - num_calcio
+                pre_padding_target = padding_necessario // 2
+                post_padding_target = padding_necessario - pre_padding_target
+
+                # Calcola i limiti per il prelievo del padding
+                # Il padding iniziale può essere preso solo da dopo l'ultimo gruppo creato
+                limite_pre = ultimo_indice_usato + 1
+                # Il padding finale può essere preso fino alla fine dell'array
+                limite_post = len(dati_input)
+
+                # Calcola il padding disponibile e prelevalo
+                pre_padding_disponibile = calcio_start - limite_pre
+                post_padding_disponibile = limite_post - calcio_end
+
+                pre_da_prendere = min(pre_padding_disponibile, pre_padding_target)
+                post_da_prendere = min(post_padding_disponibile, post_padding_target)
+                
+                # Logica di compensazione
+                mancanti = padding_necessario - (pre_da_prendere + post_da_prendere)
+                if mancanti > 0:
+                    extra_post = min(mancanti, post_padding_disponibile - post_da_prendere)
+                    post_da_prendere += extra_post
+                    mancanti -= extra_post
+                if mancanti > 0:
+                    extra_pre = min(mancanti, pre_padding_disponibile - pre_da_prendere)
+                    pre_da_prendere += extra_pre
+                
+                # Se ancora mancano elementi, questo gruppo non può essere formato a 20.
+                if pre_da_prendere + post_da_prendere + num_calcio < dimensione_gruppo:
+                    print(f"ATTENZIONE: Blocco 'Calcio' (indici {calcio_start}-{calcio_end-1}) non ha abbastanza elementi circostanti per formare un gruppo di {dimensione_gruppo}. Saltato.")
+                    continue
+
+                start_gruppo = calcio_start - pre_da_prendere
+                end_gruppo = calcio_end + post_da_prendere
+
+            # Estrai il gruppo e aggiorna l'ultimo indice usato
+            indici_gruppo = np.arange(start_gruppo, end_gruppo)
+            etichette_gruppo = dati_input[indici_gruppo]
+            gruppo = list(zip(etichette_gruppo, indici_gruppo))
+            gruppi_finali.append(gruppo)
+            
+            ultimo_indice_usato = end_gruppo - 1
+                
+        return np.array(gruppi_finali)
+    
+    def split(self, smv_matrix):
+        samples_array = np.array()
+        for i in range(len(smv_matrix)):
+            samples_array = np.append(samples_array, self.classify_sample(smv_matrix[i]))
+        
+        
     def predict(self, kick_df):
         try:
             x_numpy = kick_df.values

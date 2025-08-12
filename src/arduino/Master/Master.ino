@@ -253,11 +253,12 @@ void setup() {
   Wire.beginTransmission(MPU); Wire.write(0x6B); Wire.write(0);
   if (Wire.endTransmission(true) != 0) { Serial.println("Errore I2C MPU6050!"); while(1); }
   
+  /*
     // Configura il filtro passa-basso digitale (DLPF)
-  Wire.beginTransmission(MPU_ADDR);
   Wire.write(0x1A); // Registro CONFIG
   // 0x04 per una bandwidth di circa 20 Hz.
-  Wire.write(0x04);
+  Wire.write(0x03);
+  */
 
   Wire.beginTransmission(MPU); Wire.write(0x1C); Wire.write(0x18); Wire.endTransmission(true); // Accel ±16g
   Wire.beginTransmission(MPU); Wire.write(0x1B); Wire.write(0x10); Wire.endTransmission(true); // Gyro ±1000 °/s
