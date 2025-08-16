@@ -9,6 +9,7 @@ import pandas as pd
 from joblib import load
 import numpy as np
 
+# --- Costanti e Configurazioni 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = BASE_DIR.strip("src\python") + '\model\\rf_model.sav'
 
@@ -21,7 +22,8 @@ SENSORS = ['A', 'G']
 AXES = ['x', 'y', 'z']
 
 EXPECTED_ESP_IDS = [str(i + 1) for i in range(NUM_BOARDS)]
-EXPECTED_DATA_COLUMNS = len(SENSORS) * len(AXES) * NUM_BOARDS
+NUM_DATA_PER_TIMESTEP = len(SENSORS) * len(AXES) * NUM_BOARDS
+EXPECTED_DATA_COLUMNS = TIMESTEPS * NUM_DATA_PER_TIMESTEP
 
 MAX_FETCH_ATTEMPTS = 2
 RETRY_DELAY_SECONDS = 2
@@ -52,13 +54,16 @@ class DataProcessor:
         self.axes = axes
         self.expected_esp_ids = expected_esp_ids
 
+
     def generate_column_names(self):
         column_names = []
-        for board_id in range(1, self.num_boards + 1):
-            for sensor_type in self.sensors:
-                for axis in self.axes:
-                    col_name = f"{sensor_type}{board_id}{axis}"
-                    column_names.append(col_name)
+        for i in range(self.timesteps):
+            suffix = f"_{i + 1}"
+            for board_id in range(1, self.num_boards + 1):
+                for sensor_type in self.sensors:
+                    for axis in self.axes:
+                        col_name = f"{sensor_type}{board_id}{axis}{suffix}"
+                        column_names.append(col_name)
         return column_names
 
     def parse(self, raw_data):
@@ -76,12 +81,15 @@ class DataProcessor:
             else: esp_data.append([])
 
         return esp_data
-    
+
     def format(self, esp_data):
         # Verifies data completeness and number of samples
+        #print(esp_data)
         active_esp_ids = [str(esp_id + 1) for esp_id in range(len(esp_data)) if esp_data[esp_id] != []]
         samples_counts = [(len(esp_data[int(esp_id) - 1]) / 6) for esp_id in active_esp_ids]
         min_samples = int(min(samples_counts))
+        #print(f"QUESTO è len(samples_counts): {len(samples_counts)}")
+        #print(f"QUESTO è self.num_boards: {self.num_boards}")
         if self.timesteps > 0 and len(samples_counts) != self.num_boards: 
             raise UncompleteData(e_ids=self.expected_esp_ids, r_ids=active_esp_ids)
         elif min_samples < self.timesteps:
@@ -93,14 +101,21 @@ class DataProcessor:
             del esp_data[esp][-1:data_to_eliminate:-1]
 
         # Conversion in list of lists format, where each sublist contains a single sample
-        data = []
+        unfiltered_data = []
         for i in range(min_samples):
             sample = []
             for j in range(self.num_boards):
                 start = i * len(self.sensors) * len(self.axes)
                 end = start + len(self.sensors) * len(self.axes)
                 sample.extend(esp_data[j][start:end])
-            data.append(sample)
+            unfiltered_data.append(sample)
+        
+        # Sample reduction to 20
+        data = [[]]
+        step = (len(unfiltered_data) - 1) / (self.timesteps - 1)
+        for i in range(self.timesteps):
+            index = round(i * step)
+            for j in unfiltered_data[min(index, len(unfiltered_data) - 1)]: data[0].append(j)
 
         return data
     
@@ -123,6 +138,7 @@ class DataProcessor:
             print(f"Generic error during DELETE: {e}")
             return False
 
+
 class Predictor:
     def __init__(self, model, url_fetch, max_fetch_attempts, retry_delay_seconds, data_processor: DataProcessor):
         self.model = model
@@ -132,107 +148,6 @@ class Predictor:
         self.url_fetch = url_fetch
         self.max_fetch_attempts = max_fetch_attempts
         self.retry_delay_seconds = retry_delay_seconds
-
-    def compute_smv(self, df):
-        out_list = []
-        in_array = df.to_numpy()
-        
-        for row in in_array:
-            temp_list = []
-            for i in range(0, len(row), 3):
-                if i + 2 < len(row):
-                    smv = np.sqrt(row[i]**2 + row[i+1]**2 + row[i+2]**2)
-                    temp_list.append(smv)
-            out_list.append(temp_list)
-        
-        return np.array(out_list)
-    
-    def classify_samples(self, smv_array, threshold=6.5):
-        smv_classified = np.array([])
-        for single_sample in smv_array:
-            mean = np.mean(single_sample)
-            classified = "Calcio" if mean > threshold else "Fermo"
-            smv_classified = np.append(smv_classified, classified)
-
-        return smv_classified
-    
-    def split(self, labels, df_data, group_dimension=20, min_kick_len=3):
-        # 1. Identifica tutti i blocchi (Fermo e Calcio)
-        blocks = []
-        if len(labels) == 0:
-            return pd.DataFrame()
-            
-        current_label, start_index = labels[0], 0
-        for i in range(1, len(labels)):
-            if labels[i] != current_label:
-                blocks.append({'label': current_label, 'start': start_index, 'end': i})
-                current_label, start_index = labels[i], i
-        blocks.append({'label': current_label, 'start': start_index, 'end': len(labels)})
-        
-        # 2. Filtra per tenere solo i blocchi di Calcio che superano la lunghezza minima
-        valid_kick_blocks = [
-            b for b in blocks 
-            if b['label'] == 'Kick' and (b['end'] - b['start']) >= min_kick_len
-        ]
-
-        flattened_groups_list = []
-        last_index = -1
-
-        # 3. Itera sui blocchi validi per costruire i gruppi senza sovrapposizioni
-        for kick_block in valid_kick_blocks:
-            kick_start = kick_block['start']
-            
-            if kick_start <= last_index:
-                continue
-
-            kick_end = kick_block['end']
-            num_kick = kick_end - kick_start
-
-            # 4. Logica per garantire che il gruppo sia SEMPRE di dimensione fissa
-            if num_kick >= group_dimension:
-                # Se il blocco è troppo grande, prendiamo solo i primi `dimensione_gruppo` elementi
-                group_start = kick_start
-                group_end = kick_start + group_dimension
-            else:
-                # Altrimenti, calcola il padding necessario
-                padding_needed = group_dimension - num_kick
-                pre_padding_target = padding_needed // 2
-                
-                # Limiti da cui possiamo prelevare padding
-                limit_pre = last_index + 1
-                limit_post = len(labels)
-
-                pre_padding_available = kick_start - limit_pre
-                post_padding_available = limit_post - kick_end
-                
-                # Logica di compensazione per distribuire il padding
-                pre_to_take = min(pre_padding_available, pre_padding_target)
-                # Calcola quanto serve dopo, tenendo conto di quanto abbiamo già preso prima
-                post_to_take = min(post_padding_available, padding_needed - pre_to_take)
-                
-                # Se dopo non c'era abbastanza, prova a prendere il resto da prima
-                lacking = padding_needed - (pre_to_take + post_to_take)
-                if lacking > 0:
-                    pre_to_take += min(lacking, pre_padding_available - pre_to_take)
-                
-                # Se ancora non si raggiunge la dimensione, il gruppo non può essere formato
-                if pre_to_take + post_to_take + num_kick < group_dimension:
-                    continue
-
-                start_group = kick_start - pre_to_take
-                end_group = kick_end + post_to_take
-
-            # 5. Estrai la fetta dal DataFrame, appiattiscila e salvala
-            df_group = df_data.iloc[start_group:end_group]
-            flattened_row = df_group.values.flatten()
-            flattened_groups_list.append(flattened_row)
-            
-            last_index = end_group - 1
-            
-        if not flattened_groups_list:
-            return pd.DataFrame()
-
-        return pd.DataFrame(flattened_groups_list)
         
     def predict(self, kick_df):
         try:
@@ -240,7 +155,7 @@ class Predictor:
             y_pred = self.model.predict(x_numpy)
             prediction_result = y_pred[0]
         except Exception as e_df_pred:
-            print(f"Prediction Error: {e_df_pred}")
+            print(f"\Prediction Error: {e_df_pred}")
             traceback.print_exc()
 
         return prediction_result
@@ -254,6 +169,7 @@ class Predictor:
                 raw = response.text
                 if raw == "aspettaciola":
                     print("Waiting for the data...")
+                    #time.sleep(RETRY_DELAY_SECONDS)
                     continue
                 elif raw == "":
                     print("Nothing there! :(")
@@ -287,25 +203,21 @@ class Predictor:
                 self._is_running = False
             
             if data:
+                #print(data)
                 try:
+                    # data = self.extract_data()
                     kick_df = pd.DataFrame(data, columns=self.columns)
-                    smv = self.compute_smv(kick_df)
-                    
-                    smv_classified = self.classify_samples(smv)
-                    splitted_df = self.split(smv_classified, kick_df)
+                    # Nel codice finale, qui ci va la funzione che splitta e un ciclo for per iterare in ogni calcio
 
-                    #print("Cleaning data buffer on Master ESP...")
+                    #print("Pulizia buffer dati sul Master ESP...")
                     if not self.data_processor.delete_data_on_master():
-                        print("WARN: Failed cleaning buffer Master.")
+                        print("WARN: Fallita pulizia buffer Master.")
 
-                    if len(splitted_df) > 0:
-                        for i in range(len(splitted_df)):
-                            kick = splitted_df.iloc[[i]]
-                            result = self.predict(kick)
-                            print(f"---> Kick prediction: {result} <---")
+                    result = self.predict(kick_df)
+                    print(f"---> Predizione calcio: {result} <---")
 
                 except Exception as e_df:
-                    print(f"\nERROR during prediction: {e_df}")
+                    print(f"\nERRORE durante creazione DataFrame o predizione: {e_df}")
                     traceback.print_exc()
                     self._is_running = False
 
@@ -313,10 +225,10 @@ class Predictor:
             time.sleep(1)
 
     def stop(self):
-        print("Request to stop the worker thread...")
+        print("Richiesta di arresto per il thread worker...") # Log Console
         self._is_running = False
 
-
+# --- Esecuzione Principale ---
 if __name__ == "__main__":
     print("Loading the model...")
     try:
